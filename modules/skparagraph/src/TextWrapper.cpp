@@ -2,6 +2,8 @@
 #include "modules/skparagraph/src/ParagraphImpl.h"
 #include "modules/skparagraph/src/TextWrapper.h"
 
+#include <cmath>
+
 namespace skia {
 namespace textlayout {
 
@@ -320,6 +322,26 @@ void TextWrapper::breakTextIntoLines(ParagraphImpl* parent,
     auto disableLastDescent = parent->paragraphStyle().getTextHeightBehavior() & TextHeightBehavior::kDisableLastDescent;
     bool firstLine = true; // We only interested in fist line if we have to disable the first ascent
 
+    // Non-finite height is an internal failure sentinel consumed by the profile
+    // API before any geometry is returned. Never emit a line inside an exclusion
+    // whose clearance cannot be represented by SkScalar.
+    auto clearTo = [this](double top) {
+        if (top > std::numeric_limits<SkScalar>::max()) {
+            fHeight = std::numeric_limits<SkScalar>::infinity();
+            return false;
+        }
+        auto scalarTop = static_cast<SkScalar>(top);
+        if (double(scalarTop) < top) {
+            scalarTop = std::nextafter(scalarTop, std::numeric_limits<SkScalar>::infinity());
+        }
+        if (!SkIsFinite(scalarTop)) {
+            fHeight = std::numeric_limits<SkScalar>::infinity();
+            return false;
+        }
+        fHeight = scalarTop;
+        return true;
+    };
+
     SkScalar softLineMaxIntrinsicWidth = 0;
     fEndLine = TextStretch(span.data(), span.data(), parent->strutForceHeight());
     auto start = span.data();
@@ -327,80 +349,151 @@ void TextWrapper::breakTextIntoLines(ParagraphImpl* parent,
     InternalLineMetrics maxRunMetrics;
     bool needEllipsis = false;
     while (fEndLine.endCluster() != end) {
-
-        this->lookAhead(maxWidth, end, parent->getApplyRoundingHack());
-
-        auto lastLine = (hasEllipsis && unlimitedLines) || fLineNumber >= maxLines;
-        needEllipsis = hasEllipsis && !endlessLine && lastLine;
-
-        this->moveForward(needEllipsis);
-        needEllipsis &= fEndLine.endCluster() < end - 1; // Only if we have some text to ellipsize
-
-        // Do not trim end spaces on the naturally last line of the left aligned text
-        this->trimEndSpaces(align);
-
-        // For soft line breaks add to the line all the spaces next to it
-        Cluster* startLine;
-        size_t pos;
-        SkScalar widthWithSpaces;
-        std::tie(startLine, pos, widthWithSpaces) = this->trimStartSpaces(end);
-
-        if (needEllipsis && !fHardLineBreak) {
-            // This is what we need to do to preserve a space before the ellipsis
-            fEndLine.restoreBreak();
-            widthWithSpaces = fEndLine.widthWithGhostSpaces();
-        }
-
-        // If the line is empty with the hard line break, let's take the paragraph font (flutter???)
-        if (fEndLine.metrics().isClean()) {
-            fEndLine.setMetrics(parent->getEmptyMetrics());
-        }
-
-        // Deal with placeholder clusters == runs[@size==1]
-        Run* lastRun = nullptr;
-        for (auto cluster = fEndLine.startCluster(); cluster <= fEndLine.endCluster(); ++cluster) {
-            auto r = cluster->runOrNull();
-            if (r == lastRun) {
+        const bool hasProfile = !parent->paragraphStyle().getVenusFloatExclusions().empty();
+        const auto lineStart = fEndLine;
+        const auto savedMinIntrinsicWidth = fMinIntrinsicWidth;
+        const bool lastLine = (hasEllipsis && unlimitedLines) || fLineNumber >= maxLines;
+        Cluster* startLine = nullptr;
+        size_t pos = 0;
+        SkScalar widthWithSpaces = 0;
+        SkScalar lineHeight = 0;
+        TextRange textExcludingSpaces, text, textIncludingNewlines;
+        ClusterRange clusters, clustersWithGhosts;
+        SkScalar candidateHeight = parent->getEmptyMetrics().height();
+        ParagraphImpl::VenusLineBand band{0, maxWidth, 0};
+        std::vector<std::pair<SkScalar, SkScalar>> attemptedBands;
+        for (;;) {
+            fEndLine = lineStart;
+            fMinIntrinsicWidth = savedMinIntrinsicWidth;
+            band = parent->venusLineBand(fHeight, candidateHeight, maxWidth);
+            if (hasProfile && band.width == 0 && std::isfinite(band.nextTop) &&
+                band.nextTop > fHeight) {
+                if (!clearTo(band.nextTop)) return;
+                attemptedBands.clear();
                 continue;
             }
-            lastRun = r;
-            if (lastRun->placeholderStyle() != nullptr) {
-                SkASSERT(lastRun->size() == 1);
-                // Update the placeholder metrics so we can get the placeholder positions later
-                // and the line metrics (to make sure the placeholder fits)
-                lastRun->updateMetrics(&fEndLine.metrics());
+            if (hasProfile) {
+                attemptedBands.emplace_back(band.left, band.width);
             }
-        }
+            this->lookAhead(band.width, end, parent->getApplyRoundingHack());
 
-        // Before we update the line metrics with struts,
-        // let's save it for GetRectsForRange(RectHeightStyle::kMax)
-        maxRunMetrics = fEndLine.metrics();
-        maxRunMetrics.fForceStrut = false;
+            SkScalar wordsWidth = fWords.width();
+            if (hasProfile && !fWords.empty()) {
+                // lookAhead includes overflowing trailing spaces in fWords;
+                // clearance depends on the same visible width used for the line.
+                const auto savedEndLine = fEndLine;
+                fEndLine = fWords;
+                this->trimEndSpaces(align);
+                wordsWidth = fEndLine.width();
+                fEndLine = savedEndLine;
+            }
+            if (hasProfile && band.width < maxWidth &&
+                (wordsWidth > band.width ||
+                 (fWords.empty() && (fTooLongWord || fTooLongCluster))) &&
+                std::isfinite(band.nextTop) && band.nextTop > fHeight) {
+                if (!clearTo(band.nextTop)) return;
+                attemptedBands.clear();
+                continue;
+            }
+            needEllipsis = hasEllipsis && !endlessLine && lastLine;
 
-        // TODO: keep start/end/break info for text and runs but in a better way that below
-        TextRange textExcludingSpaces(fEndLine.startCluster()->textRange().start, fEndLine.endCluster()->textRange().end);
-        TextRange text(fEndLine.startCluster()->textRange().start, fEndLine.breakCluster()->textRange().start);
-        TextRange textIncludingNewlines(fEndLine.startCluster()->textRange().start, startLine->textRange().start);
-        if (startLine == end) {
-            textIncludingNewlines.end = parent->text().size();
-            text.end = parent->text().size();
-        }
-        ClusterRange clusters(fEndLine.startCluster() - start, fEndLine.endCluster() - start + 1);
-        ClusterRange clustersWithGhosts(fEndLine.startCluster() - start, startLine - start);
+            this->moveForward(needEllipsis);
+            needEllipsis &=
+                    fEndLine.endCluster() < end - 1;  // Only if we have some text to ellipsize
 
-        if (disableFirstAscent && firstLine) {
-            fEndLine.metrics().fAscent = fEndLine.metrics().fRawAscent;
-        }
-        if (disableLastDescent && (lastLine || (startLine == end && !fHardLineBreak ))) {
-            fEndLine.metrics().fDescent = fEndLine.metrics().fRawDescent;
-        }
+            // Do not trim end spaces on the naturally last line of the left aligned text
+            this->trimEndSpaces(align);
 
-        if (parent->strutEnabled()) {
-            // Make sure font metrics are not less than the strut
-            parent->strutMetrics().updateLineMetrics(fEndLine.metrics());
-        }
+            // For soft line breaks add to the line all the spaces next to it
+            std::tie(startLine, pos, widthWithSpaces) = this->trimStartSpaces(end);
 
-        SkScalar lineHeight = fEndLine.metrics().height();
+            if (needEllipsis && !fHardLineBreak) {
+                // This is what we need to do to preserve a space before the ellipsis
+                fEndLine.restoreBreak();
+                widthWithSpaces = fEndLine.widthWithGhostSpaces();
+            }
+
+            // If the line is empty with the hard line break, let's take the paragraph font
+            // (flutter???)
+            if (fEndLine.metrics().isClean()) {
+                fEndLine.setMetrics(parent->getEmptyMetrics());
+            }
+
+            // Deal with placeholder clusters == runs[@size==1]
+            Run* lastRun = nullptr;
+            for (auto cluster = fEndLine.startCluster(); cluster <= fEndLine.endCluster();
+                 ++cluster) {
+                auto r = cluster->runOrNull();
+                if (r == lastRun) {
+                    continue;
+                }
+                lastRun = r;
+                if (lastRun->placeholderStyle() != nullptr) {
+                    SkASSERT(lastRun->size() == 1);
+                    // Update the placeholder metrics so we can get the placeholder positions later
+                    // and the line metrics (to make sure the placeholder fits)
+                    lastRun->updateMetrics(&fEndLine.metrics());
+                }
+            }
+
+            // Before we update the line metrics with struts,
+            // let's save it for GetRectsForRange(RectHeightStyle::kMax)
+            maxRunMetrics = fEndLine.metrics();
+            maxRunMetrics.fForceStrut = false;
+
+            // TODO: keep start/end/break info for text and runs but in a better way that below
+            textExcludingSpaces = TextRange(fEndLine.startCluster()->textRange().start,
+                                            fEndLine.endCluster()->textRange().end);
+            text = TextRange(fEndLine.startCluster()->textRange().start,
+                             fEndLine.breakCluster()->textRange().start);
+            textIncludingNewlines = TextRange(fEndLine.startCluster()->textRange().start,
+                                              startLine->textRange().start);
+            if (startLine == end) {
+                textIncludingNewlines.end = parent->text().size();
+                text.end = parent->text().size();
+            }
+            clusters = ClusterRange(fEndLine.startCluster() - start,
+                                    fEndLine.endCluster() - start + 1);
+            clustersWithGhosts = ClusterRange(fEndLine.startCluster() - start, startLine - start);
+
+            if (disableFirstAscent && firstLine) {
+                fEndLine.metrics().fAscent = fEndLine.metrics().fRawAscent;
+            }
+            if (disableLastDescent && (lastLine || (startLine == end && !fHardLineBreak))) {
+                fEndLine.metrics().fDescent = fEndLine.metrics().fRawDescent;
+            }
+
+            if (parent->strutEnabled()) {
+                // Make sure font metrics are not less than the strut
+                parent->strutMetrics().updateLineMetrics(fEndLine.metrics());
+            }
+
+            lineHeight = fEndLine.metrics().height();
+
+            if (hasProfile) {
+                const auto actualBand = parent->venusLineBand(fHeight, lineHeight, maxWidth);
+                if (actualBand.left != band.left || actualBand.width != band.width) {
+                    // Tall runs/placeholder/strut can change which rectangles intersect
+                    // this line. Rebreak from the same cluster using its actual height.
+                    const auto key = std::make_pair(actualBand.left, actualBand.width);
+                    if (std::find(attemptedBands.begin(), attemptedBands.end(), key) !=
+                        attemptedBands.end()) {
+                        // If wrapping removes the tall run and oscillates between bands,
+                        // clear the earliest active float instead of retaining stale bounds.
+                        const auto nextTop = std::min(band.nextTop, actualBand.nextTop);
+                        if (std::isfinite(nextTop) && nextTop > fHeight) {
+                            if (!clearTo(nextTop)) return;
+                            attemptedBands.clear();
+                        } else {
+                            break;
+                        }
+                    }
+                    candidateHeight = lineHeight;
+                    continue;
+                }
+            }
+            break;
+        }
         firstLine = false;
 
         if (fEndLine.empty()) {
@@ -414,10 +507,13 @@ void TextWrapper::breakTextIntoLines(ParagraphImpl* parent,
 
         addLine(textExcludingSpaces,
                 text,
-                textIncludingNewlines, clusters, clustersWithGhosts, widthWithSpaces,
+                textIncludingNewlines,
+                clusters,
+                clustersWithGhosts,
+                widthWithSpaces,
                 fEndLine.startPos(),
                 fEndLine.endPos(),
-                SkVector::Make(0, fHeight),
+                SkVector::Make(band.left, fHeight),
                 SkVector::Make(fEndLine.width(), lineHeight),
                 fEndLine.metrics(),
                 needEllipsis && !fHardLineBreak);
@@ -509,6 +605,12 @@ void TextWrapper::breakTextIntoLines(ParagraphImpl* parent,
             parent->strutMetrics().updateLineMetrics(fEndLine.metrics());
         }
 
+        auto emptyBand = parent->venusLineBand(fHeight, fEndLine.metrics().height(), maxWidth);
+        while (emptyBand.width == 0 && std::isfinite(emptyBand.nextTop) &&
+               emptyBand.nextTop > fHeight) {
+            if (!clearTo(emptyBand.nextTop)) return;
+            emptyBand = parent->venusLineBand(fHeight, fEndLine.metrics().height(), maxWidth);
+        }
         ClusterRange clusters(fEndLine.breakCluster() - start, fEndLine.endCluster() - start);
         addLine(fEndLine.breakCluster()->textRange(),
                 fEndLine.breakCluster()->textRange(),
@@ -518,7 +620,7 @@ void TextWrapper::breakTextIntoLines(ParagraphImpl* parent,
                 0,
                 0,
                 0,
-                SkVector::Make(0, fHeight),
+                SkVector::Make(emptyBand.left, fHeight),
                 SkVector::Make(0, fEndLine.metrics().height()),
                 fEndLine.metrics(),
                 needEllipsis);

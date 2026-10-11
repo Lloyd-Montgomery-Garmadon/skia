@@ -75,19 +75,29 @@ private:
     bool fHalfLeading;
 };
 
+// Venus-only, value-owned exclusion geometry. Empty profiles preserve Skia's
+// ordinary line breaking path and cache identity.
+struct VenusFloatExclusion {
+    double top, bottom, left, right;
+    uint32_t side;
+    bool operator==(const VenusFloatExclusion& other) const {
+        return top == other.top && bottom == other.bottom && left == other.left &&
+               right == other.right && side == other.side;
+    }
+};
+
 struct ParagraphStyle {
     ParagraphStyle();
 
     bool operator==(const ParagraphStyle& rhs) const {
-        return this->fHeight == rhs.fHeight &&
-               this->fEllipsis == rhs.fEllipsis &&
+        return this->fHeight == rhs.fHeight && this->fEllipsis == rhs.fEllipsis &&
                this->fEllipsisUtf16 == rhs.fEllipsisUtf16 &&
                this->fTextDirection == rhs.fTextDirection && this->fTextAlign == rhs.fTextAlign &&
                this->fDefaultTextStyle == rhs.fDefaultTextStyle &&
                this->fReplaceTabCharacters == rhs.fReplaceTabCharacters &&
                this->fFakeMissingFontStyles == rhs.fFakeMissingFontStyles &&
-               this->fHonorZeroHeightOverride == rhs.fHonorZeroHeightOverride;
-
+               this->fHonorZeroHeightOverride == rhs.fHonorZeroHeightOverride &&
+               this->fVenusFloatExclusions == rhs.fVenusFloatExclusions;
     }
 
     const StrutStyle& getStrutStyle() const { return fStrutStyle; }
@@ -144,7 +154,15 @@ struct ParagraphStyle {
     bool getHonorZeroHeightOverride() const { return fHonorZeroHeightOverride; }
     void setHonorZeroHeightOverride(bool value) { fHonorZeroHeightOverride = value; }
 
+    const std::vector<VenusFloatExclusion>& getVenusFloatExclusions() const {
+        return fVenusFloatExclusions;
+    }
+    void setVenusFloatExclusions(std::vector<VenusFloatExclusion> exclusions) {
+        fVenusFloatExclusions = std::move(exclusions);
+    }
+
 private:
+    std::vector<VenusFloatExclusion> fVenusFloatExclusions;
     StrutStyle fStrutStyle;
     TextStyle fDefaultTextStyle;
     TextAlign fTextAlign;

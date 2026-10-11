@@ -1146,6 +1146,7 @@ LineMetrics TextLine::getMetrics() const {
         result.fWidth = littleRound(result.fWidth);
     }
     result.fLeft = this->offset().fX;
+    result.fTop = this->offset().fY;
     // This is Flutter definition of a baseline
     result.fBaseline = this->offset().fY + this->height() - this->sizes().descent();
     result.fLineNumber = this - fOwner->lines().data();

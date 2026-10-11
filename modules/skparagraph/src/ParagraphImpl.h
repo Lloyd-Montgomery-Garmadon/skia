@@ -117,6 +117,13 @@ public:
     PositionWithAffinity getGlyphPositionAtCoordinate(SkScalar dx, SkScalar dy) override;
     SkRange<size_t> getWordBoundary(unsigned offset) override;
 
+    struct VenusLineBand {
+        SkScalar left;
+        SkScalar width;
+        double nextTop;
+    };
+    VenusLineBand venusLineBand(SkScalar top, SkScalar height, SkScalar width) const;
+
     bool getApplyRoundingHack() const { return fParagraphStyle.getApplyRoundingHack(); }
 
     size_t lineNumber() override { return fLines.size(); }

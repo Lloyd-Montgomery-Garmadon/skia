@@ -166,9 +166,9 @@ void ParagraphImpl::layout(SkScalar rawWidth) {
         floorWidth = SkScalarFloorToScalar(floorWidth);
     }
 
-    if ((!SkIsFinite(rawWidth) || fLongestLine <= floorWidth) &&
-        fState >= kLineBroken &&
-         fLines.size() == 1 && fLines.front().ellipsis() == nullptr) {
+    if (fParagraphStyle.getVenusFloatExclusions().empty() &&
+        (!SkIsFinite(rawWidth) || fLongestLine <= floorWidth) && fState >= kLineBroken &&
+        fLines.size() == 1 && fLines.front().ellipsis() == nullptr) {
         // Most common case: one line of text (and one line is never justified, so no cluster shifts)
         // We cannot mark it as kLineBroken because the new width can be bigger than the old width
         fWidth = floorWidth;
@@ -612,12 +612,47 @@ bool ParagraphImpl::shapeTextIntoEndlessLine() {
     return result;
 }
 
-void ParagraphImpl::breakShapedTextIntoLines(SkScalar maxWidth) {
+ParagraphImpl::VenusLineBand ParagraphImpl::venusLineBand(SkScalar top,
+                                                          SkScalar height,
+                                                          SkScalar width) const {
+    VenusLineBand band{0, width, std::numeric_limits<double>::infinity()};
+    if (fParagraphStyle.getVenusFloatExclusions().empty() || !SkIsFinite(width)) {
+        return band;
+    }
+    double left = 0;
+    double right = width;
+    double nextTop = std::numeric_limits<double>::infinity();
+    for (const auto& e : fParagraphStyle.getVenusFloatExclusions()) {
+        // A zero-height CSS line intersects the band containing its origin.
+        if (e.bottom <= top || (height > 0 ? e.top >= double(top) + height : e.top > top) ||
+            e.right <= 0 || e.left >= width || e.left == e.right) {
+            continue;
+        }
+        if (e.side == 1) {
+            left = std::max(left, std::clamp(e.right, 0.0, double(width)));
+        } else {
+            right = std::min(right, std::clamp(e.left, 0.0, double(width)));
+        }
+        nextTop = std::min(nextTop, e.bottom);
+    }
+    band.left = static_cast<SkScalar>(left);
+    if (double(band.left) < left) {
+        band.left = std::nextafter(band.left, std::numeric_limits<SkScalar>::infinity());
+    }
+    const double available = std::max(0.0, right - double(band.left));
+    band.width = static_cast<SkScalar>(available);
+    if (double(band.width) > available) {
+        band.width = std::nextafter(band.width, 0.0f);
+    }
+    // Keep the exact clearance until the wrapper checks SkScalar representability.
+    band.nextTop = nextTop;
+    return band;
+}
 
-    if (!fHasLineBreaks &&
-        !fHasWhitespacesInside &&
-        fPlaceholders.size() == 1 &&
-        fRuns.size() == 1 && fRuns[0].fAdvance.fX <= maxWidth) {
+void ParagraphImpl::breakShapedTextIntoLines(SkScalar maxWidth) {
+    if (fParagraphStyle.getVenusFloatExclusions().empty() && !fHasLineBreaks &&
+        !fHasWhitespacesInside && fPlaceholders.size() == 1 && fRuns.size() == 1 &&
+        fRuns[0].fAdvance.fX <= maxWidth) {
         // This is a short version of a line breaking when we know that:
         // 1. We have only one line of text
         // 2. It's shaped into a single run
@@ -695,7 +730,9 @@ void ParagraphImpl::breakShapedTextIntoLines(SkScalar maxWidth) {
                 // TODO: Take in account clipped edges
                 auto& line = this->addLine(offset, advance, textExcludingSpaces, text, textWithNewlines, clusters, clustersWithGhosts, widthWithSpaces, metrics);
                 if (addEllipsis) {
-                    line.createEllipsis(maxWidth, this->getEllipsis(), true);
+                    line.createEllipsis(venusLineBand(offset.y(), advance.y(), maxWidth).width,
+                                        this->getEllipsis(),
+                                        true);
                 }
                 fLongestLine = std::max(fLongestLine, nearlyZero(line.width()) ? widthWithSpaces : line.width());
             });
@@ -706,6 +743,10 @@ void ParagraphImpl::breakShapedTextIntoLines(SkScalar maxWidth) {
     fMinIntrinsicWidth = textWrapper.minIntrinsicWidth();
     fAlphabeticBaseline = fLines.empty() ? fEmptyMetrics.alphabeticBaseline() : fLines.front().alphabeticBaseline();
     fIdeographicBaseline = fLines.empty() ? fEmptyMetrics.ideographicBaseline() : fLines.front().ideographicBaseline();
+    if (!fLines.empty() && !fParagraphStyle.getVenusFloatExclusions().empty()) {
+        fAlphabeticBaseline += fLines.front().offset().y();
+        fIdeographicBaseline += fLines.front().offset().y();
+    }
     fExceededMaxLines = textWrapper.exceededMaxLines();
 }
 
@@ -722,7 +763,8 @@ void ParagraphImpl::formatLines(SkScalar maxWidth) {
     }
 
     for (auto& line : fLines) {
-        line.format(effectiveAlign, maxWidth);
+        const auto band = venusLineBand(line.offset().y(), line.height(), maxWidth);
+        line.format(effectiveAlign, band.width);
     }
 }
 
