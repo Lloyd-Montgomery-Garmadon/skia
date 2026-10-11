@@ -85,7 +85,8 @@ struct ParagraphStyle {
                this->fTextDirection == rhs.fTextDirection && this->fTextAlign == rhs.fTextAlign &&
                this->fDefaultTextStyle == rhs.fDefaultTextStyle &&
                this->fReplaceTabCharacters == rhs.fReplaceTabCharacters &&
-               this->fFakeMissingFontStyles == rhs.fFakeMissingFontStyles;
+               this->fFakeMissingFontStyles == rhs.fFakeMissingFontStyles &&
+               this->fHonorZeroHeightOverride == rhs.fHonorZeroHeightOverride;
 
     }
 
@@ -135,6 +136,14 @@ struct ParagraphStyle {
     bool getLetterSpacingByCSSSpec() const { return fLetterSpacingByCSSSpec; }
     void setLetterSpacingByCSSSpec(bool value) { fLetterSpacingByCSSSpec = value; }
 
+    // venus: CSS `line-height: 0` is an authored line height, not "unset".
+    // When on, a text style whose height override is set keeps a zero height
+    // multiplier (the run becomes a zero-height inline box centered by half
+    // leading, CSS 2.1 §10.8.1) instead of falling back to the font metrics.
+    // Off by default, so every other paragraph lays out exactly as before.
+    bool getHonorZeroHeightOverride() const { return fHonorZeroHeightOverride; }
+    void setHonorZeroHeightOverride(bool value) { fHonorZeroHeightOverride = value; }
+
 private:
     StrutStyle fStrutStyle;
     TextStyle fDefaultTextStyle;
@@ -150,6 +159,7 @@ private:
     bool fFakeMissingFontStyles;
     bool fApplyRoundingHack = true;
     bool fLetterSpacingByCSSSpec = false;
+    bool fHonorZeroHeightOverride = false;
 };
 }  // namespace textlayout
 }  // namespace skia

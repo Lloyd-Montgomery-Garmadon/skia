@@ -93,6 +93,9 @@ ParagraphImpl::ParagraphImpl(const SkString& text,
         , fTrailingSpaces(0)
 {
     SkASSERT(fUnicode);
+    for (const auto& block : fTextStyles) {
+        fHasVenusNoSoftWrap |= block.fStyle.getVenusNoSoftWrap();
+    }
 }
 
 ParagraphImpl::ParagraphImpl(const std::u16string& utf16text,
@@ -113,6 +116,27 @@ ParagraphImpl::ParagraphImpl(const std::u16string& utf16text,
 }
 
 ParagraphImpl::~ParagraphImpl() = default;
+
+bool ParagraphImpl::venusNoSoftWrap(TextIndex index) const {
+    if (!fHasVenusNoSoftWrap) {
+        return false;
+    }
+    // Existing ordered UTF-8 style blocks are the only range source. A font or
+    // color boundary between two opted-in blocks does not become a line break.
+    int first = 0, last = fTextStyles.size();
+    while (first < last) {
+        const int middle = first + (last - first) / 2;
+        const auto& block = fTextStyles[middle];
+        if (index < block.fRange.start) {
+            last = middle;
+        } else if (index >= block.fRange.end) {
+            first = middle + 1;
+        } else {
+            return !block.fStyle.isPlaceholder() && block.fStyle.getVenusNoSoftWrap();
+        }
+    }
+    return false;
+}
 
 int32_t ParagraphImpl::unresolvedGlyphs() {
     if (fState < kShaped) {
@@ -717,6 +741,9 @@ void ParagraphImpl::resolveStrut() {
     SkFont font(typefaces.front(), strutStyle.getFontSize());
     SkFontMetrics metrics;
     font.getMetrics(&metrics);
+    if (font.getSize() == 0) {
+        metrics = {};
+    }
     const SkScalar strutLeading = strutStyle.getLeading() < 0 ? 0 : strutStyle.getLeading() * strutStyle.getFontSize();
 
     if (strutStyle.getHeightOverride()) {

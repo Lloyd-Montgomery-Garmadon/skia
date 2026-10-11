@@ -189,6 +189,9 @@ public:
     bool exceededMaxLines() const { return fExceededMaxLines; }
 
 private:
+    ParagraphImpl* fParent = nullptr;
+    bool preservesCluster(const Cluster* cluster) const;
+    bool protectsBreak(const Cluster* cluster) const;
     TextStretch fWords;
     TextStretch fClusters;
     TextStretch fClip;

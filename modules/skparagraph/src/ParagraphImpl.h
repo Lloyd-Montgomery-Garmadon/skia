@@ -256,6 +256,7 @@ private:
     friend class OneLineShaper;
 
     void computeEmptyMetrics();
+    bool venusNoSoftWrap(TextIndex index) const;
 
     // Input
     skia_private::TArray<StyleBlock<SkScalar>> fLetterSpaceStyles;
@@ -265,6 +266,7 @@ private:
     skia_private::TArray<StyleBlock<std::vector<TextShadow>>> fShadowStyles;
     skia_private::TArray<StyleBlock<Decoration>> fDecorationStyles;
     skia_private::TArray<Block, true> fTextStyles; // TODO: take out only the font stuff
+    bool fHasVenusNoSoftWrap = false;
     skia_private::TArray<Placeholder, true> fPlaceholders;
     SkString fText;
 

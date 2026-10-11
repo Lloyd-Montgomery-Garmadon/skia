@@ -366,11 +366,18 @@ void TextLine::buildTextBlob(TextRange textRange, const TextStyle& style, const 
     SkTextBlobBuilder builder;
     context.run->copyTo(builder, SkToU32(context.pos), context.size);
     record.fClippingNeeded = context.clippingNeeded;
-    if (context.clippingNeeded) {
-        record.fClipRect = extendHeight(context).makeOffset(this->offset());
-    } else {
-        record.fClipRect = context.clip.makeOffset(this->offset());
+    SkRect clip = context.clippingNeeded ? extendHeight(context) : context.clip;
+    if (context.run->honorZeroHeight()) {
+        // venus: the CSS run box of a zero line height is zero tall; clipping
+        // to it would erase the glyphs. Only ever widen to the glyph box.
+        const SkScalar glyphTop = this->sizes().runTop(context.run, LineMetricStyle::Typographic);
+        const SkScalar glyphBottom =
+                glyphTop + context.run->calculateHeight(LineMetricStyle::Typographic,
+                                                        LineMetricStyle::Typographic);
+        clip.fTop = std::min(clip.fTop, glyphTop);
+        clip.fBottom = std::max(clip.fBottom, glyphBottom);
     }
+    record.fClipRect = clip.makeOffset(this->offset());
 
     SkASSERT(nearlyEqual(context.run->baselineShift(), style.getBaselineShift()));
     SkScalar correctedBaseline = SkScalarFloorToScalar(this->baseline() + style.getBaselineShift() +  0.5);
@@ -635,8 +642,10 @@ std::unique_ptr<Run> TextLine::shapeEllipsis(const SkString& ellipsis, const Clu
 
     class ShapeHandler final : public SkShaper::RunHandler {
     public:
-        ShapeHandler(SkScalar lineHeight, bool useHalfLeading, SkScalar baselineShift, const SkString& ellipsis)
-            : fRun(nullptr), fLineHeight(lineHeight), fUseHalfLeading(useHalfLeading), fBaselineShift(baselineShift), fEllipsis(ellipsis) {}
+        ShapeHandler(SkScalar lineHeight, bool useHalfLeading, SkScalar baselineShift,
+                     const SkString& ellipsis, bool honorZeroHeight)
+            : fRun(nullptr), fLineHeight(lineHeight), fHonorZeroHeight(honorZeroHeight),
+              fUseHalfLeading(useHalfLeading), fBaselineShift(baselineShift), fEllipsis(ellipsis) {}
         std::unique_ptr<Run> run() & { return std::move(fRun); }
 
     private:
@@ -648,7 +657,7 @@ std::unique_ptr<Run> TextLine::shapeEllipsis(const SkString& ellipsis, const Clu
 
         Buffer runBuffer(const RunInfo& info) override {
             SkASSERT(!fRun);
-            fRun = std::make_unique<Run>(nullptr, info, 0, fLineHeight, fUseHalfLeading, fBaselineShift, 0, 0);
+            fRun = std::make_unique<Run>(nullptr, info, 0, fLineHeight, fUseHalfLeading, fBaselineShift, 0, 0, fHonorZeroHeight);
             return fRun->newRunBuffer();
         }
 
@@ -663,6 +672,7 @@ std::unique_ptr<Run> TextLine::shapeEllipsis(const SkString& ellipsis, const Clu
 
         std::unique_ptr<Run> fRun;
         SkScalar fLineHeight;
+        bool fHonorZeroHeight;
         bool fUseHalfLeading;
         SkScalar fBaselineShift;
         SkString fEllipsis;
@@ -682,7 +692,8 @@ std::unique_ptr<Run> TextLine::shapeEllipsis(const SkString& ellipsis, const Clu
     }
 
     auto shaped = [&](sk_sp<SkTypeface> typeface, sk_sp<SkFontMgr> fallback) -> std::unique_ptr<Run> {
-        ShapeHandler handler(run.heightMultiplier(), run.useHalfLeading(), run.baselineShift(), ellipsis);
+        ShapeHandler handler(run.heightMultiplier(), run.useHalfLeading(), run.baselineShift(),
+                             ellipsis, run.honorZeroHeight());
         SkFont font(std::move(typeface), textStyle.getFontSize());
         font.setEdging(textStyle.getFontEdging());
         font.setHinting(textStyle.getFontHinting());
@@ -1039,7 +1050,9 @@ SkScalar TextLine::iterateThroughSingleRunByStyles(TextAdjustment textAdjustment
         auto runStyleTextRange = TextRange(start, start + size);
         ClipContext clipContext = correctContext(runStyleTextRange, textOffsetInRun);
         textOffsetInRun += clipContext.clip.width();
-        if (clipContext.clip.height() == 0) {
+        // venus: an honored zero-height run has a zero-height CSS box but real
+        // glyphs; skipping it would drop the text of every style block.
+        if (clipContext.clip.height() == 0 && !run->honorZeroHeight()) {
             continue;
         }
         visitor(runStyleTextRange, *prevStyle, clipContext);
@@ -1148,8 +1161,7 @@ LineMetrics TextLine::getMetrics() const {
         *runWidthInLine = this->iterateThroughSingleRunByStyles(
         TextAdjustment::GlyphCluster, run, runOffsetInLine, textRange, StyleType::kForeground,
         [&result, &run](TextRange textRange, const TextStyle& style, const ClipContext& context) {
-            SkFontMetrics fontMetrics;
-            run->fFont.getMetrics(&fontMetrics);
+            SkFontMetrics fontMetrics = run->fFontMetrics;
             StyleMetrics styleMetrics(&style, fontMetrics);
             result.fLineMetrics.emplace(textRange.start, styleMetrics);
         });
@@ -1254,7 +1266,9 @@ void TextLine::getRectsForRange(TextRange textRange0,
                 }
                 break;
                 case RectHeightStyle::kTight: {
-                    if (run->fHeightMultiplier <= 0) {
+                    // venus: an honored zero-height run still has a glyph box;
+                    // tight rects report it instead of the zero-height run box.
+                    if (run->fHeightMultiplier <= 0 && !run->honorZeroHeight()) {
                         break;
                     }
                     const auto effectiveBaseline = this->baseline() + this->sizes().delta();
