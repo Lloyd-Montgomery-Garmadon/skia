@@ -70,6 +70,7 @@ void TextWrapper::lookAhead(SkScalar maxWidth, Cluster* endOfClusters, bool appl
     fClip.startFrom(fEndLine.startCluster(), fEndLine.startPos());
 
     LineBreakerWithLittleRounding breaker(maxWidth, applyRoundingHack);
+    const bool wordBoundaryWrap = !fParent->paragraphStyle().getVenusFloatExclusions().empty();
     Cluster* nextNonBreakingSpace = nullptr;
     bool protectedWord = false;
     for (auto cluster = fEndLine.endCluster(); cluster < endOfClusters; ++cluster) {
@@ -77,7 +78,8 @@ void TextWrapper::lookAhead(SkScalar maxWidth, Cluster* endOfClusters, bool appl
         } else if (
                 // TODO: Trying to deal with flutter rounding problem. Must be removed...
                 SkScalar width = fWords.width() + fClusters.width() + cluster->width();
-                !preservesCluster(cluster) && breaker.breakLine(width)) {
+                !preservesCluster(cluster) && (!wordBoundaryWrap || !fWords.empty()) &&
+                breaker.breakLine(width)) {
             // Retry the complete protected word after the previous legal break.
             // With no previous word it may overflow, but never splits its range.
             if (protectedWord && !fWords.empty()) break;
@@ -105,6 +107,11 @@ void TextWrapper::lookAhead(SkScalar maxWidth, Cluster* endOfClusters, bool appl
                 }
                 break;
             }
+
+            // Venus CSS float paragraphs may overflow their first whole word,
+            // but later words restart after the preceding legal boundary.
+            // The default Flutter path keeps its emergency cluster breaking.
+            if (wordBoundaryWrap) break;
 
             // Walk further to see if there is a too long word, cluster or glyph
             SkScalar nextWordLength = fClusters.width();
@@ -387,7 +394,8 @@ void TextWrapper::breakTextIntoLines(ParagraphImpl* parent,
                 wordsWidth = fEndLine.width();
                 fEndLine = savedEndLine;
             }
-            if (hasProfile && band.width < maxWidth &&
+            if (hasProfile && !preservesCluster(lineStart.startCluster()) &&
+                band.width < maxWidth &&
                 (wordsWidth > band.width ||
                  (fWords.empty() && (fTooLongWord || fTooLongCluster))) &&
                 std::isfinite(band.nextTop) && band.nextTop > fHeight) {
