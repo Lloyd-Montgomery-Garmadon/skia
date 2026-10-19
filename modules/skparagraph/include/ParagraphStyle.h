@@ -157,8 +157,6 @@ struct ParagraphStyle {
     // multiplier (the run becomes a zero-height inline box centered by half
     // leading, CSS 2.1 §10.8.1) instead of falling back to the font metrics.
     // Off by default, so every other paragraph lays out exactly as before.
-    bool getVenusWordBoundaryWrap() const { return fVenusWordBoundaryWrap; }
-    void setVenusWordBoundaryWrap(bool value) { fVenusWordBoundaryWrap = value; }
     bool getHonorZeroHeightOverride() const { return fHonorZeroHeightOverride; }
     void setHonorZeroHeightOverride(bool value) { fHonorZeroHeightOverride = value; }
 
@@ -191,7 +189,6 @@ private:
     bool fApplyRoundingHack = true;
     bool fLetterSpacingByCSSSpec = false;
     bool fHonorZeroHeightOverride = false;
-    bool fVenusWordBoundaryWrap = false;
 };
 }  // namespace textlayout
 }  // namespace skia
