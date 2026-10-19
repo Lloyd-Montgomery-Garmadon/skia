@@ -788,7 +788,12 @@ void ParagraphImpl::resolveStrut() {
     }
     const SkScalar strutLeading = strutStyle.getLeading() < 0 ? 0 : strutStyle.getLeading() * strutStyle.getFontSize();
 
-    if (strutStyle.getHeightOverride()) {
+    if (strutStyle.getVenusAbsoluteHeight()) {
+        const auto halfLeading = (strutStyle.getHeight() - (metrics.fDescent - metrics.fAscent)) / 2;
+        fStrutMetrics = InternalLineMetrics(metrics.fAscent - halfLeading,
+            metrics.fDescent + halfLeading, 0,
+            metrics.fAscent, metrics.fDescent, metrics.fLeading);
+    } else if (strutStyle.getHeightOverride()) {
         SkScalar strutAscent = 0.0f;
         SkScalar strutDescent = 0.0f;
         // The half leading flag doesn't take effect unless there's height override.
@@ -1116,6 +1121,13 @@ void ParagraphImpl::computeEmptyMetrics() {
     fEmptyMetrics = InternalLineMetrics(font, paragraphStyle().getStrutStyle().getForceStrutHeight());
 
     if (!paragraphStyle().getStrutStyle().getForceStrutHeight() &&
+        textStyle.getVenusAbsoluteHeight()) {
+        const auto ascent = font.getSize() == 0 ? 0 : fEmptyMetrics.ascent();
+        const auto descent = font.getSize() == 0 ? 0 : fEmptyMetrics.descent();
+        const auto halfLeading = (textStyle.getHeight() - (descent - ascent)) / 2;
+        fEmptyMetrics = InternalLineMetrics(ascent - halfLeading, descent + halfLeading,
+            0, ascent, descent, 0);
+    } else if (!paragraphStyle().getStrutStyle().getForceStrutHeight() &&
         textStyle.getHeightOverride()) {
         const auto intrinsicHeight = fEmptyMetrics.height();
         const auto strutHeight = textStyle.getHeight() * textStyle.getFontSize();

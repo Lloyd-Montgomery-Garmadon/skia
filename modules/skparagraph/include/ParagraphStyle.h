@@ -43,6 +43,9 @@ struct StrutStyle {
     void setForceStrutHeight(bool v) { fForceHeight = v; }
 
     bool getHeightOverride() const { return fHeightOverride; }
+    // Venus-only: interpret height as CSS px, default disabled.
+    bool getVenusAbsoluteHeight() const { return fVenusAbsoluteHeight; }
+    void setVenusAbsoluteHeight(bool value) { fVenusAbsoluteHeight = value; }
     void setHeightOverride(bool v) { fHeightOverride = v; }
 
     void setHalfLeading(bool halfLeading) { fHalfLeading = halfLeading; }
@@ -51,6 +54,7 @@ struct StrutStyle {
     bool operator==(const StrutStyle& rhs) const {
         return this->fEnabled == rhs.fEnabled &&
                this->fHeightOverride == rhs.fHeightOverride &&
+               this->fVenusAbsoluteHeight == rhs.fVenusAbsoluteHeight &&
                this->fForceHeight == rhs.fForceHeight &&
                this->fHalfLeading == rhs.fHalfLeading &&
                nearlyEqual(this->fLeading, rhs.fLeading) &&
@@ -70,6 +74,7 @@ private:
     bool fForceHeight;
     bool fEnabled;
     bool fHeightOverride;
+    bool fVenusAbsoluteHeight = false;
     // true: half leading.
     // false: scale ascent/descent with fHeight.
     bool fHalfLeading;
@@ -152,6 +157,8 @@ struct ParagraphStyle {
     // multiplier (the run becomes a zero-height inline box centered by half
     // leading, CSS 2.1 §10.8.1) instead of falling back to the font metrics.
     // Off by default, so every other paragraph lays out exactly as before.
+    bool getVenusWordBoundaryWrap() const { return fVenusWordBoundaryWrap; }
+    void setVenusWordBoundaryWrap(bool value) { fVenusWordBoundaryWrap = value; }
     bool getHonorZeroHeightOverride() const { return fHonorZeroHeightOverride; }
     void setHonorZeroHeightOverride(bool value) { fHonorZeroHeightOverride = value; }
 
@@ -184,6 +191,7 @@ private:
     bool fApplyRoundingHack = true;
     bool fLetterSpacingByCSSSpec = false;
     bool fHonorZeroHeightOverride = false;
+    bool fVenusWordBoundaryWrap = false;
 };
 }  // namespace textlayout
 }  // namespace skia

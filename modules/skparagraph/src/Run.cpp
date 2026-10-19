@@ -22,7 +22,8 @@ Run::Run(ParagraphImpl* owner,
          SkScalar baselineShift,
          size_t index,
          SkScalar offsetX,
-         bool honorZeroHeight)
+         bool honorZeroHeight,
+         bool venusAbsoluteHeight)
     : fOwner(owner)
     , fTextRange(firstChar + info.utf8Range.begin(), firstChar + info.utf8Range.end())
     , fClusterRange(EMPTY_CLUSTERS)
@@ -35,6 +36,7 @@ Run::Run(ParagraphImpl* owner,
     , fClusterIndexes(fGlyphData->clusterIndexes)
     , fHeightMultiplier(heightMultiplier)
     , fHonorZeroHeight(honorZeroHeight)
+    , fVenusAbsoluteHeight(venusAbsoluteHeight)
     , fUseHalfLeading(useHalfLeading)
     , fBaselineShift(baselineShift)
 {
@@ -71,6 +73,12 @@ void Run::calculateMetrics() {
     fCorrectAscent = fFontMetrics.fAscent - fFontMetrics.fLeading * 0.5;
     fCorrectDescent = fFontMetrics.fDescent + fFontMetrics.fLeading * 0.5;
     fCorrectLeading = 0;
+    if (fVenusAbsoluteHeight) {
+        const auto halfLeading = (fHeightMultiplier - (fCorrectDescent - fCorrectAscent)) / 2;
+        fCorrectAscent -= halfLeading;
+        fCorrectDescent += halfLeading;
+        return;
+    }
     if (fFont.getSize() == 0) {
         return;  // Also avoids 0/0 when an explicit height multiplier is present.
     }

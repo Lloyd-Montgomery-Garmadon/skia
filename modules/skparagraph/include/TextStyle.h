@@ -262,6 +262,9 @@ public:
 
     void setHeightOverride(bool heightOverride) { fHeightOverride = heightOverride; }
     bool getHeightOverride() const { return fHeightOverride; }
+    // Venus-only: interpret height as CSS px, default disabled.
+    bool getVenusAbsoluteHeight() const { return fVenusAbsoluteHeight; }
+    void setVenusAbsoluteHeight(bool value) { fVenusAbsoluteHeight = value; }
 
     void setHalfLeading(bool halfLeading) { fHalfLeading = halfLeading; }
     bool getHalfLeading() const { return fHalfLeading; }
@@ -322,6 +325,7 @@ private:
     SkFontHinting fHinting = SkFontHinting::kSlight;
     SkScalar fHeight = 1.0;
     bool fHeightOverride = false;
+    bool fVenusAbsoluteHeight = false;
     SkScalar fBaselineShift = 0.0f;
     // true: half leading.
     // false: scale ascent/descent with fHeight.

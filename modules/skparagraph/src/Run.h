@@ -62,7 +62,8 @@ public:
         SkScalar baselineShift,
         size_t index,
         SkScalar shiftX,
-        bool honorZeroHeight = false);
+        bool honorZeroHeight = false,
+        bool venusAbsoluteHeight = false);
     Run(const Run&) = default;
     Run& operator=(const Run&) = delete;
     Run(Run&&) = default;
@@ -101,6 +102,7 @@ public:
     // venus: true when a zero height multiplier is an authored height (see
     // ParagraphStyle::setHonorZeroHeightOverride), not "use font metrics".
     bool honorZeroHeight() const { return fHonorZeroHeight; }
+    bool venusAbsoluteHeight() const { return fVenusAbsoluteHeight; }
     bool useHalfLeading() const { return fUseHalfLeading; }
     SkScalar baselineShift() const { return fBaselineShift; }
     PlaceholderStyle* placeholderStyle() const;
@@ -211,6 +213,7 @@ private:
     SkFontMetrics fFontMetrics;
     const SkScalar fHeightMultiplier;
     const bool fHonorZeroHeight;
+    const bool fVenusAbsoluteHeight;
     const bool fUseHalfLeading;
     const SkScalar fBaselineShift;
     SkScalar fCorrectAscent;

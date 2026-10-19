@@ -20,6 +20,7 @@ TextStyle TextStyle::cloneForPlaceholder() {
     result.fBackground = fBackground;
     result.fForeground = fForeground;
     result.fHeightOverride = fHeightOverride;
+    result.fVenusAbsoluteHeight = fVenusAbsoluteHeight;
     result.fIsPlaceholder = true;
     result.fFontFeatures = fFontFeatures;
     result.fHalfLeading = fHalfLeading;
@@ -58,6 +59,7 @@ bool TextStyle::equals(const TextStyle& other) const {
     if (fHeight != other.fHeight) {
         return false;
     }
+    if (fVenusAbsoluteHeight != other.fVenusAbsoluteHeight) return false;
     if (fHeightOverride != other.fHeightOverride) {
         return false;
     }
@@ -112,6 +114,7 @@ bool TextStyle::equalsByFonts(const TextStyle& that) const {
            nearlyEqual(fLetterSpacing, that.fLetterSpacing) &&
            nearlyEqual(fWordSpacing, that.fWordSpacing) &&
            nearlyEqual(fHeight, that.fHeight) &&
+           fVenusAbsoluteHeight == that.fVenusAbsoluteHeight &&
            nearlyEqual(fBaselineShift, that.fBaselineShift) &&
            nearlyEqual(fFontSize, that.fFontSize) &&
            fLocale == that.fLocale;
@@ -158,6 +161,7 @@ bool TextStyle::matchOneAttribute(StyleType styleType, const TextStyle& other) c
                    fFontFamilies == other.fFontFamilies &&
                    fFontSize == other.fFontSize &&
                    fHeight == other.fHeight &&
+                   fVenusAbsoluteHeight == other.fVenusAbsoluteHeight &&
                    fHalfLeading == other.fHalfLeading &&
                    fBaselineShift == other.fBaselineShift &&
                    fFontArguments == other.fFontArguments;

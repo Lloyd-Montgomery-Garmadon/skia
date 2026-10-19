@@ -216,7 +216,7 @@ void OneLineShaper::finish(const Block& block, SkScalar height, SkScalar& advanc
                     block.fStyle.getBaselineShift(),
                     this->fParagraph->fRuns.size(),
                     advanceX,
-                    fHonorZeroHeight
+                    fHonorZeroHeight, block.fStyle.getVenusAbsoluteHeight()
                 );
         auto piece = &this->fParagraph->fRuns.back();
 
@@ -658,6 +658,7 @@ bool OneLineShaper::shape() {
 
             // Start from the beginning (hoping that it's a simple case one block - one run)
             fHeight = block.fStyle.getHeightOverride() ? block.fStyle.getHeight() : 0;
+            fVenusAbsoluteHeight = block.fStyle.getVenusAbsoluteHeight();
             fHonorZeroHeight = block.fStyle.getHeightOverride() &&
                                fParagraph->paragraphStyle().getHonorZeroHeightOverride();
             fUseHalfLeading = block.fStyle.getHalfLeading();

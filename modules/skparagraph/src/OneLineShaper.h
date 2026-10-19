@@ -19,6 +19,7 @@ public:
         : fParagraph(paragraph)
         , fHeight(0.0f)
         , fHonorZeroHeight(false)
+        , fVenusAbsoluteHeight(false)
         , fUseHalfLeading(false)
         , fBaselineShift(0.0f)
         , fAdvance(SkPoint::Make(0.0f, 0.0f))
@@ -98,7 +99,7 @@ private:
                                            fBaselineShift,
                                            ++fUniqueRunId,
                                            fAdvance.fX,
-                                           fHonorZeroHeight);
+                                           fHonorZeroHeight, fVenusAbsoluteHeight);
         return fCurrentRun->newRunBuffer();
     }
 
@@ -118,6 +119,7 @@ private:
     TextRange fCurrentText;
     SkScalar fHeight;
     bool fHonorZeroHeight;
+    bool fVenusAbsoluteHeight;
     bool fUseHalfLeading;
     SkScalar fBaselineShift;
     SkVector fAdvance;
