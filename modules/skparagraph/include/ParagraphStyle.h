@@ -97,6 +97,7 @@ struct ParagraphStyle {
                this->fReplaceTabCharacters == rhs.fReplaceTabCharacters &&
                this->fFakeMissingFontStyles == rhs.fFakeMissingFontStyles &&
                this->fHonorZeroHeightOverride == rhs.fHonorZeroHeightOverride &&
+               this->fVenusWordBoundaryWrap == rhs.fVenusWordBoundaryWrap &&
                this->fVenusFloatExclusions == rhs.fVenusFloatExclusions;
     }
 
@@ -154,6 +155,10 @@ struct ParagraphStyle {
     bool getHonorZeroHeightOverride() const { return fHonorZeroHeightOverride; }
     void setHonorZeroHeightOverride(bool value) { fHonorZeroHeightOverride = value; }
 
+    // CSS-only: keep Unicode soft/hard breaks, suppress emergency word splitting.
+    bool getVenusWordBoundaryWrap() const { return fVenusWordBoundaryWrap; }
+    void setVenusWordBoundaryWrap(bool value) { fVenusWordBoundaryWrap = value; }
+
     const std::vector<VenusFloatExclusion>& getVenusFloatExclusions() const {
         return fVenusFloatExclusions;
     }
@@ -162,6 +167,7 @@ struct ParagraphStyle {
     }
 
 private:
+    bool fVenusWordBoundaryWrap = false;
     std::vector<VenusFloatExclusion> fVenusFloatExclusions;
     StrutStyle fStrutStyle;
     TextStyle fDefaultTextStyle;

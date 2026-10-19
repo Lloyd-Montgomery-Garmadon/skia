@@ -70,7 +70,8 @@ void TextWrapper::lookAhead(SkScalar maxWidth, Cluster* endOfClusters, bool appl
     fClip.startFrom(fEndLine.startCluster(), fEndLine.startPos());
 
     LineBreakerWithLittleRounding breaker(maxWidth, applyRoundingHack);
-    const bool wordBoundaryWrap = !fParent->paragraphStyle().getVenusFloatExclusions().empty();
+    const bool wordBoundaryWrap = fParent->paragraphStyle().getVenusWordBoundaryWrap() ||
+                                  !fParent->paragraphStyle().getVenusFloatExclusions().empty();
     Cluster* nextNonBreakingSpace = nullptr;
     bool protectedWord = false;
     for (auto cluster = fEndLine.endCluster(); cluster < endOfClusters; ++cluster) {
@@ -108,7 +109,7 @@ void TextWrapper::lookAhead(SkScalar maxWidth, Cluster* endOfClusters, bool appl
                 break;
             }
 
-            // Venus CSS float paragraphs may overflow their first whole word,
+            // Venus CSS paragraphs may overflow their first whole word,
             // but later words restart after the preceding legal boundary.
             // The default Flutter path keeps its emergency cluster breaking.
             if (wordBoundaryWrap) break;
