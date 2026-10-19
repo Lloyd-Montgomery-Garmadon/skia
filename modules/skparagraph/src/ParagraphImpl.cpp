@@ -1185,6 +1185,51 @@ void ParagraphImpl::updateTextAlign(TextAlign textAlign) {
     }
 }
 
+void ParagraphImpl::updateForegroundPaintIDForRanges(
+        const std::vector<TextRange>& ranges, size_t paintID) {
+    this->ensureUTF16Mapping();
+    std::vector<TextRange> utf8;
+    utf8.reserve(ranges.size());
+    for (const auto& range : ranges) {
+        if (range.start >= range.end ||
+            range.end >= static_cast<size_t>(fUTF8IndexForUTF16Index.size())) continue;
+        utf8.emplace_back(fUTF8IndexForUTF16Index[range.start],
+                          fUTF8IndexForUTF16Index[range.end]);
+    }
+    skia_private::TArray<Block, true> updated;
+    updated.reserve(fTextStyles.size() + 2 * utf8.size());
+    size_t current = 0;
+    for (const auto& block : fTextStyles) {
+        auto cursor = block.fRange.start;
+        while (current < utf8.size() && utf8[current].end <= cursor) ++current;
+        while (current < utf8.size() && utf8[current].start < block.fRange.end) {
+            const auto begin = std::max(cursor, utf8[current].start);
+            const auto end = std::min(block.fRange.end, utf8[current].end);
+            if (cursor < begin) updated.emplace_back(cursor, begin, block.fStyle);
+            auto style = block.fStyle;
+            style.setForegroundPaintID(paintID);
+            updated.emplace_back(begin, end, style);
+            cursor = end;
+            if (utf8[current].end <= cursor) ++current;
+            if (cursor == block.fRange.end) break;
+        }
+        if (cursor < block.fRange.end)
+            updated.emplace_back(cursor, block.fRange.end, block.fStyle);
+    }
+    fTextStyles = std::move(updated);
+    // Sorted ranges and blocks are visited once; glyphs/line positions stay fixed.
+    size_t begin = 0;
+    for (auto& line : fLines) {
+        const auto text = line.textWithNewlines();
+        while (begin < static_cast<size_t>(fTextStyles.size()) &&
+               fTextStyles[begin].fRange.end <= text.start) ++begin;
+        size_t end = begin;
+        while (end < static_cast<size_t>(fTextStyles.size()) &&
+               fTextStyles[end].fRange.start < text.end) ++end;
+        line.updatePaintBlockRange(BlockRange(begin, end));
+    }
+}
+
 void ParagraphImpl::updateForegroundPaint(size_t from, size_t to, SkPaint paint) {
     SkASSERT(from == 0 && to == fText.size());
     auto defaultStyle = fParagraphStyle.getTextStyle();

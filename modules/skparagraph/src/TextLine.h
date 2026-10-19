@@ -64,6 +64,11 @@ public:
              SkScalar widthWithSpaces,
              InternalLineMetrics sizes);
 
+    void updatePaintBlockRange(BlockRange blocks) {
+        fBlockRange = blocks;
+        fTextBlobCache.clear();
+        fTextBlobCachePopulated = false;
+    }
     TextRange trimmedText() const { return fTextExcludingSpaces; }
     TextRange textWithNewlines() const { return fTextIncludingNewlines; }
     TextRange text() const { return fText; }

@@ -213,6 +213,7 @@ public:
     void updateTextAlign(TextAlign textAlign) override;
     void updateFontSize(size_t from, size_t to, SkScalar fontSize) override;
     void updateForegroundPaint(size_t from, size_t to, SkPaint paint) override;
+    void updateForegroundPaintIDForRanges(const std::vector<TextRange>& ranges, size_t paintID) override;
     void updateBackgroundPaint(size_t from, size_t to, SkPaint paint) override;
 
     void visit(const Visitor&) override;
