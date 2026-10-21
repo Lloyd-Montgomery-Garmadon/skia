@@ -135,6 +135,8 @@ struct PlaceholderStyle {
 
     SkScalar fWidth = 0;
     SkScalar fHeight = 0;
+    // Venus-only inline edges are transparent to Unicode line breaking.
+    bool fVenusInlineEdge = false, fVenusInlineEdgeStart = false;
     PlaceholderAlignment fAlignment = PlaceholderAlignment::kBaseline;
     TextBaseline fBaseline = TextBaseline::kAlphabetic;
     // Distance from the top edge of the rect to the baseline position. This

@@ -202,7 +202,9 @@ void TextStyle::setFontArguments(const std::optional<SkFontArguments>& args) {
 }
 
 bool PlaceholderStyle::equals(const PlaceholderStyle& other) const {
-    return nearlyEqual(fWidth, other.fWidth) &&
+    return fVenusInlineEdge == other.fVenusInlineEdge &&
+           (!fVenusInlineEdge || fVenusInlineEdgeStart == other.fVenusInlineEdgeStart) &&
+           nearlyEqual(fWidth, other.fWidth) &&
            nearlyEqual(fHeight, other.fHeight) &&
            fAlignment == other.fAlignment &&
            fBaseline == other.fBaseline &&
