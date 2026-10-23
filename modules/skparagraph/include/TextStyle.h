@@ -271,6 +271,9 @@ public:
 
     void setWordSpacing(SkScalar wordSpacing) { fWordSpacing = wordSpacing; }
     SkScalar getWordSpacing() const { return fWordSpacing; }
+    // Venus-only, default-off range policy; not a Unicode or widget override.
+    void setVenusNoSoftWrap(bool value) { fVenusNoSoftWrap = value; }
+    bool getVenusNoSoftWrap() const { return fVenusNoSoftWrap; }
 
     SkTypeface* getTypeface() const { return fTypeface.get(); }
     sk_sp<SkTypeface> refTypeface() const { return fTypeface; }
@@ -326,6 +329,7 @@ private:
     SkString fLocale = {};
     SkScalar fLetterSpacing = 0.0;
     SkScalar fWordSpacing = 0.0;
+    bool fVenusNoSoftWrap = false;
 
     TextBaseline fTextBaseline = TextBaseline::kAlphabetic;
 
