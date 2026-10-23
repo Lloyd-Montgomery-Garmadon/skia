@@ -61,7 +61,8 @@ public:
         bool useHalfLeading,
         SkScalar baselineShift,
         size_t index,
-        SkScalar shiftX);
+        SkScalar shiftX,
+        bool honorZeroHeight = false);
     Run(const Run&) = default;
     Run& operator=(const Run&) = delete;
     Run(Run&&) = default;
@@ -97,6 +98,9 @@ public:
     TextDirection getTextDirection() const { return leftToRight() ? TextDirection::kLtr : TextDirection::kRtl; }
     size_t index() const { return fIndex; }
     SkScalar heightMultiplier() const { return fHeightMultiplier; }
+    // venus: true when a zero height multiplier is an authored height (see
+    // ParagraphStyle::setHonorZeroHeightOverride), not "use font metrics".
+    bool honorZeroHeight() const { return fHonorZeroHeight; }
     bool useHalfLeading() const { return fUseHalfLeading; }
     SkScalar baselineShift() const { return fBaselineShift; }
     PlaceholderStyle* placeholderStyle() const;
@@ -206,6 +210,7 @@ private:
 
     SkFontMetrics fFontMetrics;
     const SkScalar fHeightMultiplier;
+    const bool fHonorZeroHeight;
     const bool fUseHalfLeading;
     const SkScalar fBaselineShift;
     SkScalar fCorrectAscent;

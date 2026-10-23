@@ -21,7 +21,8 @@ Run::Run(ParagraphImpl* owner,
          bool useHalfLeading,
          SkScalar baselineShift,
          size_t index,
-         SkScalar offsetX)
+         SkScalar offsetX,
+         bool honorZeroHeight)
     : fOwner(owner)
     , fTextRange(firstChar + info.utf8Range.begin(), firstChar + info.utf8Range.end())
     , fClusterRange(EMPTY_CLUSTERS)
@@ -33,6 +34,7 @@ Run::Run(ParagraphImpl* owner,
     , fOffsets(fGlyphData->offsets)
     , fClusterIndexes(fGlyphData->clusterIndexes)
     , fHeightMultiplier(heightMultiplier)
+    , fHonorZeroHeight(honorZeroHeight)
     , fUseHalfLeading(useHalfLeading)
     , fBaselineShift(baselineShift)
 {
@@ -49,6 +51,11 @@ Run::Run(ParagraphImpl* owner,
     fOffsets.push_back_n(info.glyphCount + 1);
     fClusterIndexes.push_back_n(info.glyphCount + 1);
     info.fFont.getMetrics(&fFontMetrics);
+    // Zero-size glyphs are shaped with a 1px fallback font by SkScalerContext;
+    // that fallback must not give their line box, baseline, or hit region height.
+    if (fFont.getSize() == 0) {
+        fFontMetrics = {};
+    }
 
     this->calculateMetrics();
 
@@ -64,7 +71,12 @@ void Run::calculateMetrics() {
     fCorrectAscent = fFontMetrics.fAscent - fFontMetrics.fLeading * 0.5;
     fCorrectDescent = fFontMetrics.fDescent + fFontMetrics.fLeading * 0.5;
     fCorrectLeading = 0;
-    if (SkScalarNearlyZero(fHeightMultiplier)) {
+    if (fFont.getSize() == 0) {
+        return;  // Also avoids 0/0 when an explicit height multiplier is present.
+    }
+    // venus: an honored zero multiplier falls through, so half leading turns
+    // the run into a zero-height box at (ascent+descent)/2 (CSS 2.1 §10.8.1).
+    if (!fHonorZeroHeight && SkScalarNearlyZero(fHeightMultiplier)) {
         return;
     }
     const auto runHeight = fHeightMultiplier * fFont.getSize();
@@ -78,9 +90,11 @@ void Run::calculateMetrics() {
         fCorrectAscent *= multiplier;
         fCorrectDescent *= multiplier;
     }
-    // If we shift the baseline we need to make sure the shifted text fits the line
-    fCorrectAscent += fBaselineShift;
-    fCorrectDescent += fBaselineShift;
+    // venus: the baseline shift is NOT folded in here. correctAscent() /
+    // correctDescent() (Run.h) already add fBaselineShift, and they are the only
+    // readers of these fields; adding it here too counted the shift twice for
+    // height-override runs only (the early return above skips this line), so a
+    // shifted run with a declared line-height grew the line box by the shift.
 }
 
 SkShaper::RunHandler::Buffer Run::newRunBuffer() {
