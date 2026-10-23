@@ -117,6 +117,13 @@ public:
     PositionWithAffinity getGlyphPositionAtCoordinate(SkScalar dx, SkScalar dy) override;
     SkRange<size_t> getWordBoundary(unsigned offset) override;
 
+    struct VenusLineBand {
+        SkScalar left;
+        SkScalar width;
+        double nextTop;
+    };
+    VenusLineBand venusLineBand(SkScalar top, SkScalar height, SkScalar width) const;
+
     bool getApplyRoundingHack() const { return fParagraphStyle.getApplyRoundingHack(); }
 
     size_t lineNumber() override { return fLines.size(); }
@@ -206,6 +213,7 @@ public:
     void updateTextAlign(TextAlign textAlign) override;
     void updateFontSize(size_t from, size_t to, SkScalar fontSize) override;
     void updateForegroundPaint(size_t from, size_t to, SkPaint paint) override;
+    void updateForegroundPaintIDForRanges(const std::vector<TextRange>& ranges, size_t paintID) override;
     void updateBackgroundPaint(size_t from, size_t to, SkPaint paint) override;
 
     void visit(const Visitor&) override;
@@ -256,6 +264,7 @@ private:
     friend class OneLineShaper;
 
     void computeEmptyMetrics();
+    bool venusNoSoftWrap(TextIndex index) const;
 
     // Input
     skia_private::TArray<StyleBlock<SkScalar>> fLetterSpaceStyles;
@@ -265,6 +274,7 @@ private:
     skia_private::TArray<StyleBlock<std::vector<TextShadow>>> fShadowStyles;
     skia_private::TArray<StyleBlock<Decoration>> fDecorationStyles;
     skia_private::TArray<Block, true> fTextStyles; // TODO: take out only the font stuff
+    bool fHasVenusNoSoftWrap = false;
     skia_private::TArray<Placeholder, true> fPlaceholders;
     SkString fText;
 

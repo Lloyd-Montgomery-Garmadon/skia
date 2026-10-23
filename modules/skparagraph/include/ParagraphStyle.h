@@ -43,6 +43,9 @@ struct StrutStyle {
     void setForceStrutHeight(bool v) { fForceHeight = v; }
 
     bool getHeightOverride() const { return fHeightOverride; }
+    // Venus-only: interpret height as CSS px, default disabled.
+    bool getVenusAbsoluteHeight() const { return fVenusAbsoluteHeight; }
+    void setVenusAbsoluteHeight(bool value) { fVenusAbsoluteHeight = value; }
     void setHeightOverride(bool v) { fHeightOverride = v; }
 
     void setHalfLeading(bool halfLeading) { fHalfLeading = halfLeading; }
@@ -51,6 +54,7 @@ struct StrutStyle {
     bool operator==(const StrutStyle& rhs) const {
         return this->fEnabled == rhs.fEnabled &&
                this->fHeightOverride == rhs.fHeightOverride &&
+               this->fVenusAbsoluteHeight == rhs.fVenusAbsoluteHeight &&
                this->fForceHeight == rhs.fForceHeight &&
                this->fHalfLeading == rhs.fHalfLeading &&
                nearlyEqual(this->fLeading, rhs.fLeading) &&
@@ -70,23 +74,36 @@ private:
     bool fForceHeight;
     bool fEnabled;
     bool fHeightOverride;
+    bool fVenusAbsoluteHeight = false;
     // true: half leading.
     // false: scale ascent/descent with fHeight.
     bool fHalfLeading;
+};
+
+// Venus-only, value-owned exclusion geometry. Empty profiles preserve Skia's
+// ordinary line breaking path and cache identity.
+struct VenusFloatExclusion {
+    double top, bottom, left, right;
+    uint32_t side;
+    bool operator==(const VenusFloatExclusion& other) const {
+        return top == other.top && bottom == other.bottom && left == other.left &&
+               right == other.right && side == other.side;
+    }
 };
 
 struct ParagraphStyle {
     ParagraphStyle();
 
     bool operator==(const ParagraphStyle& rhs) const {
-        return this->fHeight == rhs.fHeight &&
-               this->fEllipsis == rhs.fEllipsis &&
+        return this->fHeight == rhs.fHeight && this->fEllipsis == rhs.fEllipsis &&
                this->fEllipsisUtf16 == rhs.fEllipsisUtf16 &&
                this->fTextDirection == rhs.fTextDirection && this->fTextAlign == rhs.fTextAlign &&
                this->fDefaultTextStyle == rhs.fDefaultTextStyle &&
                this->fReplaceTabCharacters == rhs.fReplaceTabCharacters &&
-               this->fFakeMissingFontStyles == rhs.fFakeMissingFontStyles;
-
+               this->fFakeMissingFontStyles == rhs.fFakeMissingFontStyles &&
+               this->fHonorZeroHeightOverride == rhs.fHonorZeroHeightOverride &&
+               this->fVenusWordBoundaryWrap == rhs.fVenusWordBoundaryWrap &&
+               this->fVenusFloatExclusions == rhs.fVenusFloatExclusions;
     }
 
     const StrutStyle& getStrutStyle() const { return fStrutStyle; }
@@ -135,7 +152,28 @@ struct ParagraphStyle {
     bool getLetterSpacingByCSSSpec() const { return fLetterSpacingByCSSSpec; }
     void setLetterSpacingByCSSSpec(bool value) { fLetterSpacingByCSSSpec = value; }
 
+    // venus: CSS `line-height: 0` is an authored line height, not "unset".
+    // When on, a text style whose height override is set keeps a zero height
+    // multiplier (the run becomes a zero-height inline box centered by half
+    // leading, CSS 2.1 §10.8.1) instead of falling back to the font metrics.
+    // Off by default, so every other paragraph lays out exactly as before.
+    bool getHonorZeroHeightOverride() const { return fHonorZeroHeightOverride; }
+    void setHonorZeroHeightOverride(bool value) { fHonorZeroHeightOverride = value; }
+
+    // CSS-only: keep Unicode soft/hard breaks, suppress emergency word splitting.
+    bool getVenusWordBoundaryWrap() const { return fVenusWordBoundaryWrap; }
+    void setVenusWordBoundaryWrap(bool value) { fVenusWordBoundaryWrap = value; }
+
+    const std::vector<VenusFloatExclusion>& getVenusFloatExclusions() const {
+        return fVenusFloatExclusions;
+    }
+    void setVenusFloatExclusions(std::vector<VenusFloatExclusion> exclusions) {
+        fVenusFloatExclusions = std::move(exclusions);
+    }
+
 private:
+    bool fVenusWordBoundaryWrap = false;
+    std::vector<VenusFloatExclusion> fVenusFloatExclusions;
     StrutStyle fStrutStyle;
     TextStyle fDefaultTextStyle;
     TextAlign fTextAlign;
@@ -150,6 +188,7 @@ private:
     bool fFakeMissingFontStyles;
     bool fApplyRoundingHack = true;
     bool fLetterSpacingByCSSSpec = false;
+    bool fHonorZeroHeightOverride = false;
 };
 }  // namespace textlayout
 }  // namespace skia

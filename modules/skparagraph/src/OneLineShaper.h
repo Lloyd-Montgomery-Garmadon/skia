@@ -18,6 +18,8 @@ public:
     explicit OneLineShaper(ParagraphImpl* paragraph)
         : fParagraph(paragraph)
         , fHeight(0.0f)
+        , fHonorZeroHeight(false)
+        , fVenusAbsoluteHeight(false)
         , fUseHalfLeading(false)
         , fBaselineShift(0.0f)
         , fAdvance(SkPoint::Make(0.0f, 0.0f))
@@ -96,7 +98,8 @@ private:
                                            fUseHalfLeading,
                                            fBaselineShift,
                                            ++fUniqueRunId,
-                                           fAdvance.fX);
+                                           fAdvance.fX,
+                                           fHonorZeroHeight, fVenusAbsoluteHeight);
         return fCurrentRun->newRunBuffer();
     }
 
@@ -115,6 +118,8 @@ private:
     ParagraphImpl* fParagraph;
     TextRange fCurrentText;
     SkScalar fHeight;
+    bool fHonorZeroHeight;
+    bool fVenusAbsoluteHeight;
     bool fUseHalfLeading;
     SkScalar fBaselineShift;
     SkVector fAdvance;

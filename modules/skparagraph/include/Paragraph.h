@@ -78,6 +78,8 @@ public:
     virtual void updateTextAlign(TextAlign textAlign) = 0;
     virtual void updateFontSize(size_t from, size_t to, SkScalar fontSize) = 0;
     virtual void updateForegroundPaint(size_t from, size_t to, SkPaint paint) = 0;
+    // Venus opt-in UTF-16 paint range; preserves shaped runs and line geometry.
+    virtual void updateForegroundPaintIDForRanges(const std::vector<TextRange>& ranges, size_t paintID) = 0;
     virtual void updateBackgroundPaint(size_t from, size_t to, SkPaint paint) = 0;
 
     enum VisitorFlags {
