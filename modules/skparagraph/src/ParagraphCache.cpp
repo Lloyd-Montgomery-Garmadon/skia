@@ -1,4 +1,5 @@
 // Copyright 2019 Google LLC
+#include <functional>
 #include <memory>
 
 #include "modules/skparagraph/include/FontArguments.h"
@@ -167,6 +168,9 @@ uint32_t ParagraphCacheKey::computeHash() const {
         }
         hash = mix(hash, SkGoodHash()(relax(ts.fStyle.getLetterSpacing())));
         hash = mix(hash, SkGoodHash()(relax(ts.fStyle.getWordSpacing())));
+        if (ts.fStyle.getVenusNoSoftWrap()) {
+            hash = mix(hash, SkGoodHash()(true));
+        }
         hash = mix(hash, SkGoodHash()(ts.fStyle.getLocale()));
         hash = mix(hash, SkGoodHash()(relax(ts.fStyle.getHeight())));
         hash = mix(hash, SkGoodHash()(relax(ts.fStyle.getBaselineShift())));
@@ -186,6 +190,22 @@ uint32_t ParagraphCacheKey::computeHash() const {
     hash = mix(hash, SkGoodHash()(relax(fParagraphStyle.getHeight())));
     hash = mix(hash, SkGoodHash()(fParagraphStyle.getTextDirection()));
     hash = mix(hash, SkGoodHash()(fParagraphStyle.getReplaceTabCharacters() ? 1 : 0));
+    hash = mix(hash, SkGoodHash()(fParagraphStyle.getHonorZeroHeightOverride() ? 1 : 0));
+
+    if (!fParagraphStyle.getVenusFloatExclusions().empty()) {
+        hash = mix(hash, 0x41545631u);
+        hash = mix(hash, 0x56464c4fu);
+        hash = mix(hash, 1u);
+        hash = mix(hash, static_cast<uint32_t>(fParagraphStyle.getVenusFloatExclusions().size()));
+        for (const auto& e : fParagraphStyle.getVenusFloatExclusions()) {
+            for (double coordinate : {e.top, e.bottom, e.left, e.right}) {
+                const uint64_t bits = static_cast<uint64_t>(std::hash<double>()(coordinate));
+                hash = mix(hash, static_cast<uint32_t>(bits));
+                hash = mix(hash, static_cast<uint32_t>(bits >> 32));
+            }
+            hash = mix(hash, e.side);
+        }
+    }
 
     auto& strutStyle = fParagraphStyle.getStrutStyle();
     if (strutStyle.getStrutEnabled()) {
@@ -222,6 +242,11 @@ bool ParagraphCacheKey::operator==(const ParagraphCacheKey& other) const {
         return false;
     }
 
+    if (fParagraphStyle.getVenusFloatExclusions() !=
+        other.fParagraphStyle.getVenusFloatExclusions()) {
+        return false;
+    }
+
     // There is no need to compare default paragraph styles - they are included into fTextStyles
     if (!exactlyEqual(fParagraphStyle.getHeight(), other.fParagraphStyle.getHeight())) {
         return false;
@@ -238,13 +263,26 @@ bool ParagraphCacheKey::operator==(const ParagraphCacheKey& other) const {
         return false;
     }
 
+    // venus: with honored zero heights, the override and half-leading bits change
+    // the cached run metrics, while equalsByFonts only compares fHeight.
+    const bool honorZeroHeight = fParagraphStyle.getHonorZeroHeightOverride();
+    if (honorZeroHeight != other.fParagraphStyle.getHonorZeroHeightOverride()) {
+        return false;
+    }
+
     for (int i = 0; i < fTextStyles.size(); ++i) {
         auto& tsa = fTextStyles[i];
         auto& tsb = other.fTextStyles[i];
         if (tsa.fStyle.isPlaceholder()) {
             continue;
         }
+        if (tsa.fStyle.getVenusNoSoftWrap() != tsb.fStyle.getVenusNoSoftWrap()) return false;
         if (!(tsa.fStyle.equalsByFonts(tsb.fStyle))) {
+            return false;
+        }
+        if (honorZeroHeight &&
+            (tsa.fStyle.getHeightOverride() != tsb.fStyle.getHeightOverride() ||
+             tsa.fStyle.getHalfLeading() != tsb.fStyle.getHalfLeading())) {
             return false;
         }
         if (tsa.fRange.width() != tsb.fRange.width()) {

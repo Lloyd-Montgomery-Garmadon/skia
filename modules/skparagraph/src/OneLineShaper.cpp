@@ -215,7 +215,8 @@ void OneLineShaper::finish(const Block& block, SkScalar height, SkScalar& advanc
                     block.fStyle.getHalfLeading(),
                     block.fStyle.getBaselineShift(),
                     this->fParagraph->fRuns.size(),
-                    advanceX
+                    advanceX,
+                    fHonorZeroHeight
                 );
         auto piece = &this->fParagraph->fRuns.back();
 
@@ -400,7 +401,14 @@ void OneLineShaper::iterateThroughFontStyles(TextRange textRange,
         SkASSERT(combinedBlock.fRange.width() == 0 || combinedBlock.fRange.end == block.fRange.start);
 
         if (!combinedBlock.fRange.empty()) {
-            if (block.fStyle.matchOneAttribute(StyleType::kFont, combinedBlock.fStyle)) {
+            // venus: kFont compares fHeight but not the override bit, so a
+            // `normal` block and an authored zero-height block (both fHeight 0)
+            // would merge and one of them would lose its override.
+            const bool sameHeightOverride =
+                    !fParagraph->paragraphStyle().getHonorZeroHeightOverride() ||
+                    block.fStyle.getHeightOverride() == combinedBlock.fStyle.getHeightOverride();
+            if (sameHeightOverride &&
+                block.fStyle.matchOneAttribute(StyleType::kFont, combinedBlock.fStyle)) {
                 combinedBlock.add(blockRange);
                 addFeatures(block);
                 continue;
@@ -650,6 +658,8 @@ bool OneLineShaper::shape() {
 
             // Start from the beginning (hoping that it's a simple case one block - one run)
             fHeight = block.fStyle.getHeightOverride() ? block.fStyle.getHeight() : 0;
+            fHonorZeroHeight = block.fStyle.getHeightOverride() &&
+                               fParagraph->paragraphStyle().getHonorZeroHeightOverride();
             fUseHalfLeading = block.fStyle.getHalfLeading();
             fBaselineShift = block.fStyle.getBaselineShift();
             fAdvance = SkVector::Make(advanceX, 0);
