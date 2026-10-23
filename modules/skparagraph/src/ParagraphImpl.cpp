@@ -93,6 +93,9 @@ ParagraphImpl::ParagraphImpl(const SkString& text,
         , fTrailingSpaces(0)
 {
     SkASSERT(fUnicode);
+    for (const auto& block : fTextStyles) {
+        fHasVenusNoSoftWrap |= block.fStyle.getVenusNoSoftWrap();
+    }
 }
 
 ParagraphImpl::ParagraphImpl(const std::u16string& utf16text,
@@ -113,6 +116,27 @@ ParagraphImpl::ParagraphImpl(const std::u16string& utf16text,
 }
 
 ParagraphImpl::~ParagraphImpl() = default;
+
+bool ParagraphImpl::venusNoSoftWrap(TextIndex index) const {
+    if (!fHasVenusNoSoftWrap) {
+        return false;
+    }
+    // Existing ordered UTF-8 style blocks are the only range source. A font or
+    // color boundary between two opted-in blocks does not become a line break.
+    int first = 0, last = fTextStyles.size();
+    while (first < last) {
+        const int middle = first + (last - first) / 2;
+        const auto& block = fTextStyles[middle];
+        if (index < block.fRange.start) {
+            last = middle;
+        } else if (index >= block.fRange.end) {
+            first = middle + 1;
+        } else {
+            return !block.fStyle.isPlaceholder() && block.fStyle.getVenusNoSoftWrap();
+        }
+    }
+    return false;
+}
 
 int32_t ParagraphImpl::unresolvedGlyphs() {
     if (fState < kShaped) {
@@ -142,9 +166,9 @@ void ParagraphImpl::layout(SkScalar rawWidth) {
         floorWidth = SkScalarFloorToScalar(floorWidth);
     }
 
-    if ((!SkIsFinite(rawWidth) || fLongestLine <= floorWidth) &&
-        fState >= kLineBroken &&
-         fLines.size() == 1 && fLines.front().ellipsis() == nullptr) {
+    if (fParagraphStyle.getVenusFloatExclusions().empty() &&
+        (!SkIsFinite(rawWidth) || fLongestLine <= floorWidth) && fState >= kLineBroken &&
+        fLines.size() == 1 && fLines.front().ellipsis() == nullptr) {
         // Most common case: one line of text (and one line is never justified, so no cluster shifts)
         // We cannot mark it as kLineBroken because the new width can be bigger than the old width
         fWidth = floorWidth;
@@ -588,12 +612,47 @@ bool ParagraphImpl::shapeTextIntoEndlessLine() {
     return result;
 }
 
-void ParagraphImpl::breakShapedTextIntoLines(SkScalar maxWidth) {
+ParagraphImpl::VenusLineBand ParagraphImpl::venusLineBand(SkScalar top,
+                                                          SkScalar height,
+                                                          SkScalar width) const {
+    VenusLineBand band{0, width, std::numeric_limits<double>::infinity()};
+    if (fParagraphStyle.getVenusFloatExclusions().empty() || !SkIsFinite(width)) {
+        return band;
+    }
+    double left = 0;
+    double right = width;
+    double nextTop = std::numeric_limits<double>::infinity();
+    for (const auto& e : fParagraphStyle.getVenusFloatExclusions()) {
+        // A zero-height CSS line intersects the band containing its origin.
+        if (e.bottom <= top || (height > 0 ? e.top >= double(top) + height : e.top > top) ||
+            e.right <= 0 || e.left >= width || e.left == e.right) {
+            continue;
+        }
+        if (e.side == 1) {
+            left = std::max(left, std::clamp(e.right, 0.0, double(width)));
+        } else {
+            right = std::min(right, std::clamp(e.left, 0.0, double(width)));
+        }
+        nextTop = std::min(nextTop, e.bottom);
+    }
+    band.left = static_cast<SkScalar>(left);
+    if (double(band.left) < left) {
+        band.left = std::nextafter(band.left, std::numeric_limits<SkScalar>::infinity());
+    }
+    const double available = std::max(0.0, right - double(band.left));
+    band.width = static_cast<SkScalar>(available);
+    if (double(band.width) > available) {
+        band.width = std::nextafter(band.width, 0.0f);
+    }
+    // Keep the exact clearance until the wrapper checks SkScalar representability.
+    band.nextTop = nextTop;
+    return band;
+}
 
-    if (!fHasLineBreaks &&
-        !fHasWhitespacesInside &&
-        fPlaceholders.size() == 1 &&
-        fRuns.size() == 1 && fRuns[0].fAdvance.fX <= maxWidth) {
+void ParagraphImpl::breakShapedTextIntoLines(SkScalar maxWidth) {
+    if (fParagraphStyle.getVenusFloatExclusions().empty() && !fHasLineBreaks &&
+        !fHasWhitespacesInside && fPlaceholders.size() == 1 && fRuns.size() == 1 &&
+        fRuns[0].fAdvance.fX <= maxWidth) {
         // This is a short version of a line breaking when we know that:
         // 1. We have only one line of text
         // 2. It's shaped into a single run
@@ -671,7 +730,9 @@ void ParagraphImpl::breakShapedTextIntoLines(SkScalar maxWidth) {
                 // TODO: Take in account clipped edges
                 auto& line = this->addLine(offset, advance, textExcludingSpaces, text, textWithNewlines, clusters, clustersWithGhosts, widthWithSpaces, metrics);
                 if (addEllipsis) {
-                    line.createEllipsis(maxWidth, this->getEllipsis(), true);
+                    line.createEllipsis(venusLineBand(offset.y(), advance.y(), maxWidth).width,
+                                        this->getEllipsis(),
+                                        true);
                 }
                 fLongestLine = std::max(fLongestLine, nearlyZero(line.width()) ? widthWithSpaces : line.width());
             });
@@ -682,6 +743,10 @@ void ParagraphImpl::breakShapedTextIntoLines(SkScalar maxWidth) {
     fMinIntrinsicWidth = textWrapper.minIntrinsicWidth();
     fAlphabeticBaseline = fLines.empty() ? fEmptyMetrics.alphabeticBaseline() : fLines.front().alphabeticBaseline();
     fIdeographicBaseline = fLines.empty() ? fEmptyMetrics.ideographicBaseline() : fLines.front().ideographicBaseline();
+    if (!fLines.empty() && !fParagraphStyle.getVenusFloatExclusions().empty()) {
+        fAlphabeticBaseline += fLines.front().offset().y();
+        fIdeographicBaseline += fLines.front().offset().y();
+    }
     fExceededMaxLines = textWrapper.exceededMaxLines();
 }
 
@@ -698,7 +763,8 @@ void ParagraphImpl::formatLines(SkScalar maxWidth) {
     }
 
     for (auto& line : fLines) {
-        line.format(effectiveAlign, maxWidth);
+        const auto band = venusLineBand(line.offset().y(), line.height(), maxWidth);
+        line.format(effectiveAlign, band.width);
     }
 }
 
@@ -717,6 +783,9 @@ void ParagraphImpl::resolveStrut() {
     SkFont font(typefaces.front(), strutStyle.getFontSize());
     SkFontMetrics metrics;
     font.getMetrics(&metrics);
+    if (font.getSize() == 0) {
+        metrics = {};
+    }
     const SkScalar strutLeading = strutStyle.getLeading() < 0 ? 0 : strutStyle.getLeading() * strutStyle.getFontSize();
 
     if (strutStyle.getHeightOverride()) {
@@ -1113,6 +1182,51 @@ void ParagraphImpl::updateTextAlign(TextAlign textAlign) {
 
     if (fState >= kLineBroken) {
         fState = kLineBroken;
+    }
+}
+
+void ParagraphImpl::updateForegroundPaintIDForRanges(
+        const std::vector<TextRange>& ranges, size_t paintID) {
+    this->ensureUTF16Mapping();
+    std::vector<TextRange> utf8;
+    utf8.reserve(ranges.size());
+    for (const auto& range : ranges) {
+        if (range.start >= range.end ||
+            range.end >= static_cast<size_t>(fUTF8IndexForUTF16Index.size())) continue;
+        utf8.emplace_back(fUTF8IndexForUTF16Index[range.start],
+                          fUTF8IndexForUTF16Index[range.end]);
+    }
+    skia_private::TArray<Block, true> updated;
+    updated.reserve(fTextStyles.size() + 2 * utf8.size());
+    size_t current = 0;
+    for (const auto& block : fTextStyles) {
+        auto cursor = block.fRange.start;
+        while (current < utf8.size() && utf8[current].end <= cursor) ++current;
+        while (current < utf8.size() && utf8[current].start < block.fRange.end) {
+            const auto begin = std::max(cursor, utf8[current].start);
+            const auto end = std::min(block.fRange.end, utf8[current].end);
+            if (cursor < begin) updated.emplace_back(cursor, begin, block.fStyle);
+            auto style = block.fStyle;
+            style.setForegroundPaintID(paintID);
+            updated.emplace_back(begin, end, style);
+            cursor = end;
+            if (utf8[current].end <= cursor) ++current;
+            if (cursor == block.fRange.end) break;
+        }
+        if (cursor < block.fRange.end)
+            updated.emplace_back(cursor, block.fRange.end, block.fStyle);
+    }
+    fTextStyles = std::move(updated);
+    // Sorted ranges and blocks are visited once; glyphs/line positions stay fixed.
+    size_t begin = 0;
+    for (auto& line : fLines) {
+        const auto text = line.textWithNewlines();
+        while (begin < static_cast<size_t>(fTextStyles.size()) &&
+               fTextStyles[begin].fRange.end <= text.start) ++begin;
+        size_t end = begin;
+        while (end < static_cast<size_t>(fTextStyles.size()) &&
+               fTextStyles[end].fRange.start < text.end) ++end;
+        line.updatePaintBlockRange(BlockRange(begin, end));
     }
 }
 
