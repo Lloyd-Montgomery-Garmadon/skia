@@ -81,6 +81,8 @@ public:
     // The left edge of the line. The right edge can be obtained with `left +
     // width`
     double fLeft = 0.0;
+    // Actual line-box origin, including any float clearance gap.
+    double fTop = 0.0;
     // The y position of the baseline for this line from the top of the paragraph.
     double fBaseline = 0.0;
     // Zero indexed line number
