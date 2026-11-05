@@ -6,7 +6,9 @@
 #include "modules/skparagraph/include/ParagraphCache.h"
 #include "modules/skparagraph/src/ParagraphImpl.h"
 #include "src/base/SkFloatBits.h"
+#include "src/base/SkTInternalLList.h"
 #include "src/core/SkLRUCache.h"
+#include "src/core/SkTHash.h"
 
 using namespace skia_private;
 
@@ -16,9 +18,17 @@ namespace textlayout {
 class ParagraphCacheKey;
 class ParagraphCacheValue;
 
+// Venus shared mode keeps its own LRU (hash table + intrusive list) instead of
+// SkLRUCache: O(1) tail access, the key stored once (inside the value), and a
+// node that can be unlinked under the lock and destroyed after it.
+struct VenusParagraphTraits {
+    static const ParagraphCacheKey& GetKey(VenusParagraphNode* node);
+    static uint32_t Hash(const ParagraphCacheKey& key);
+};
+
 struct ParagraphCache::Cache {
-    Cache()
-        : fLRUCacheMap(kMaxEntries)
+    explicit Cache(int maxEntries = kMaxEntries)
+        : fLRUCacheMap(maxEntries)
         , fCacheIsOn(true)
         , fLastCachedValue(nullptr)
 #ifdef PARAGRAPH_CACHE_STATS
@@ -52,6 +62,16 @@ struct ParagraphCache::Cache {
     int fCacheMisses;
     int fHashMisses; // cache hit but hash table missed
 #endif
+
+    // ---- Venus shared mode; unused unless venusConfigureShared ran.
+    ~Cache();  // frees the venus nodes; nothing to do for a single-thread cache
+    bool fVenusShared = false;
+    int fVenusMaxEntries = kMaxEntries;
+    size_t fVenusByteBudget = 0;
+    size_t fVenusBytes = 0;
+    ParagraphCache::VenusStats fVenusStats;
+    THashTable<VenusParagraphNode*, ParagraphCacheKey, VenusParagraphTraits> fVenusMap;
+    SkTInternalLList<VenusParagraphNode> fVenusLRU;  // head = MRU, tail = LRU
 };
 
 namespace {
@@ -98,6 +118,13 @@ public:
 
     const SkString& text() const { return fText; }
 
+    // Venus: estimated heap footprint of one key (estimate, not measured).
+    size_t venusBytes() const {
+        return sizeof(ParagraphCacheKey) + fText.size() +
+               fPlaceholders.size() * sizeof(Placeholder) +
+               fTextStyles.size() * sizeof(Block);
+    }
+
 private:
     static uint32_t mix(uint32_t hash, uint32_t data);
     uint32_t computeHash() const;
@@ -138,6 +165,27 @@ public:
     bool fHasWhitespacesInside;
     TextIndex fTrailingSpaces;
 };
+
+struct VenusParagraphNode {
+    VenusParagraphNode(std::shared_ptr<ParagraphCacheValue> value, size_t bytes)
+        : fValue(std::move(value)), fBytes(bytes) {}
+    std::shared_ptr<ParagraphCacheValue> fValue;  // owns the key: fValue->fKey
+    size_t fBytes;
+    VenusParagraphNode* fDetachedNext = nullptr;  // chain of unlinked nodes awaiting delete
+    SK_DECLARE_INTERNAL_LLIST_INTERFACE(VenusParagraphNode);
+};
+
+const ParagraphCacheKey& VenusParagraphTraits::GetKey(VenusParagraphNode* node) {
+    return node->fValue->fKey;
+}
+uint32_t VenusParagraphTraits::Hash(const ParagraphCacheKey& key) { return key.hash(); }
+
+ParagraphCache::Cache::~Cache() {
+    for (VenusParagraphNode* node = fVenusLRU.head(); node; node = fVenusLRU.head()) {
+        fVenusLRU.remove(node);
+        delete node;
+    }
+}
 
 uint32_t ParagraphCacheKey::mix(uint32_t hash, uint32_t data) {
     hash += data;
@@ -328,6 +376,195 @@ ParagraphCache::~ParagraphCache() { }
 void ParagraphCache::turnOn(bool value) { fCache->fCacheIsOn = value; }
 int ParagraphCache::count() { return fCache->fLRUCacheMap.count(); }
 
+// ---------------------------------------------------------------------------
+// Venus shared mode. Everything below is only reached when
+// venusConfigureShared() ran on this cache; findParagraph/updateParagraph/reset
+// dispatch here on their first line and are otherwise the single-thread code.
+// ---------------------------------------------------------------------------
+void ParagraphCache::venusConfigureShared(int maxEntries, size_t byteBudget) {
+    SkAutoMutexExclusive lock(fParagraphMutex);
+    fCache = std::make_unique<Cache>(maxEntries > 0 ? maxEntries : Cache::kMaxEntries);
+    fCache->fVenusShared = true;
+    fCache->fVenusMaxEntries = maxEntries > 0 ? maxEntries : Cache::kMaxEntries;
+    fCache->fVenusByteBudget = byteBudget;
+}
+
+void ParagraphCache::venusGetStats(VenusStats* out) {
+    SkAutoMutexExclusive lock(fParagraphMutex);
+    const Cache& c = *fCache;
+    *out = c.fVenusStats;
+    out->shared = c.fVenusShared;
+    out->maxEntries = c.fVenusShared ? c.fVenusMaxEntries : Cache::kMaxEntries;
+    out->byteBudget = c.fVenusByteBudget;
+    out->count = c.fVenusShared ? c.fVenusMap.count() : c.fLRUCacheMap.count();
+    out->bytes = c.fVenusBytes;
+}
+
+// Estimate only. Dominated by per-run fixed costs: sizeof(Run) carries the
+// inline STArray<64> justification buffer and GlyphData carries four inline
+// STArray<64> glyph buffers, both mostly empty for short mixed-script runs
+// (800 + 1472 bytes per run on LP64).
+size_t ParagraphCache::venusEstimateBytes(const ParagraphCacheValue& value) {
+    size_t bytes = sizeof(ParagraphCacheValue) + value.fKey.venusBytes();
+    constexpr size_t kPerGlyph = sizeof(SkGlyphID) + 2 * sizeof(SkPoint) + sizeof(uint32_t);
+    for (const Run& run : value.fRuns) {
+        bytes += sizeof(Run) + sizeof(Run::GlyphData) + run.fLanguage.size();
+        const size_t glyphs = run.size() + 1;  // positions/offsets/clusterIndexes carry one trailing slot
+        if (glyphs > 64) {
+            bytes += (glyphs - 64) * kPerGlyph;
+        }
+    }
+    bytes += value.fClusters.size() * sizeof(Cluster);
+    bytes += value.fClustersIndexFromCodeUnit.size() * sizeof(size_t);
+    bytes += value.fCodeUnitProperties.size() * sizeof(SkUnicode::CodeUnitFlags);
+    bytes += value.fWords.size() * sizeof(size_t);
+    bytes += value.fBidiRegions.size() * sizeof(SkUnicode::BidiRegion);
+    return bytes;
+}
+
+// Same as updateTo, from a value instead of an entry. Runs share GlyphData by
+// shared_ptr; it is read-only after shaping (the only writers, applySpacing*
+// and Run::shift/extend, run inside shapeTextIntoEndlessLine before the
+// insert), so copies held by different paragraphs and threads never race.
+void ParagraphCache::venusCopyTo(ParagraphImpl* paragraph, const ParagraphCacheValue& value) {
+    paragraph->fRuns.clear();
+    paragraph->fRuns = value.fRuns;
+    paragraph->fClusters = value.fClusters;
+    paragraph->fClustersIndexFromCodeUnit = value.fClustersIndexFromCodeUnit;
+    paragraph->fCodeUnitProperties = value.fCodeUnitProperties;
+    paragraph->fWords = value.fWords;
+    paragraph->fBidiRegions = value.fBidiRegions;
+    paragraph->fHasLineBreaks = value.fHasLineBreaks;
+    paragraph->fHasWhitespacesInside = value.fHasWhitespacesInside;
+    paragraph->fTrailingSpaces = value.fTrailingSpaces;
+    for (auto& run : paragraph->fRuns) {
+        run.setOwner(paragraph);
+    }
+    for (auto& cluster : paragraph->fClusters) {
+        cluster.setOwner(paragraph);
+    }
+}
+
+void ParagraphCache::venusDetachTailLocked(VenusParagraphNode** detached) {
+    Cache& c = *fCache;
+    VenusParagraphNode* tail = c.fVenusLRU.tail();
+    if (tail == nullptr) {
+        return;
+    }
+    c.fVenusMap.remove(tail->fValue->fKey);
+    c.fVenusLRU.remove(tail);
+    c.fVenusBytes -= tail->fBytes;
+    c.fVenusStats.evictedCount++;
+    c.fVenusStats.evictedBytes += tail->fBytes;
+    tail->fDetachedNext = *detached;
+    *detached = tail;
+}
+
+namespace {
+// Deletes a chain of detached nodes. Runs outside the lock: a worker that
+// copied the value out of a hit still owns a shared_ptr to it, so the value
+// dies on whichever side drops the last reference.
+void venusDeleteDetached(VenusParagraphNode* detached) {
+    while (detached != nullptr) {
+        VenusParagraphNode* next = detached->fDetachedNext;
+        delete detached;
+        detached = next;
+    }
+}
+}  // namespace
+
+bool ParagraphCache::venusFindParagraph(ParagraphImpl* paragraph) {
+    // The key only reads this worker's own paragraph: build it before the lock.
+    const ParagraphCacheKey key(paragraph);
+    std::shared_ptr<ParagraphCacheValue> value;
+    {
+        SkAutoMutexExclusive lock(fParagraphMutex);
+        Cache& c = *fCache;
+        c.fVenusStats.requests++;
+        VenusParagraphNode** slot = c.fVenusMap.find(key);
+        if (slot) {
+            VenusParagraphNode* node = *slot;
+            value = node->fValue;
+            if (node != c.fVenusLRU.head()) {
+                c.fVenusLRU.remove(node);
+                c.fVenusLRU.addToHead(node);
+            }
+            c.fVenusStats.hits++;
+        } else {
+            c.fVenusStats.misses++;
+        }
+    }
+    if (!value) {
+        fChecker(paragraph, "missingParagraph", true);
+        return false;
+    }
+    venusCopyTo(paragraph, *value);  // outside the lock; the shared_ptr keeps the value alive
+    fChecker(paragraph, "foundParagraph", true);
+    return true;
+}
+
+bool ParagraphCache::venusUpdateParagraph(ParagraphImpl* paragraph) {
+    // The value copy (runs, clusters, ~100KB for long rows) only reads this
+    // worker's paragraph: build it before the lock. The key moves into the
+    // value and is stored nowhere else.
+    ParagraphCacheKey key(paragraph);
+    auto value = std::make_shared<ParagraphCacheValue>(std::move(key), paragraph);
+    const size_t bytes = venusEstimateBytes(*value);
+    VenusParagraphNode* detached = nullptr;
+    bool inserted = false;
+    {
+        SkAutoMutexExclusive lock(fParagraphMutex);
+        Cache& c = *fCache;
+        if (c.fVenusMap.find(value->fKey) != nullptr) {
+            return false;  // another worker shaped the same paragraph meanwhile
+        }
+        if (isPossiblyTextEditing(paragraph)) {
+            c.fVenusStats.editingSkips++;
+            return false;
+        }
+        // Evict before inserting so count and byte totals stay exact. A single
+        // entry larger than the whole budget still goes in and leaves on the
+        // next insert. Nodes are only unlinked here; deleted after the lock.
+        while (c.fVenusMap.count() > 0 &&
+               (c.fVenusMap.count() >= c.fVenusMaxEntries ||
+                (c.fVenusByteBudget > 0 && c.fVenusBytes + bytes > c.fVenusByteBudget))) {
+            venusDetachTailLocked(&detached);
+        }
+        ParagraphCacheValue* raw = value.get();
+        VenusParagraphNode* node = new VenusParagraphNode(std::move(value), bytes);
+        c.fVenusMap.set(node);
+        c.fVenusLRU.addToHead(node);
+        c.fVenusBytes += bytes;
+        c.fVenusStats.inserts++;
+        // Reassigned before the lock is released: the detached chain may hold
+        // the previous value, and this pointer must never outlive its target.
+        c.fLastCachedValue = raw;
+        inserted = true;
+    }
+    venusDeleteDetached(detached);
+    if (inserted) {
+        fChecker(paragraph, "addedParagraph", true);
+    }
+    return inserted;
+}
+
+void ParagraphCache::venusReset() {
+    VenusParagraphNode* detached = nullptr;
+    {
+        SkAutoMutexExclusive lock(fParagraphMutex);
+        Cache& c = *fCache;
+        for (VenusParagraphNode* node = c.fVenusLRU.head(); node; node = c.fVenusLRU.head()) {
+            c.fVenusLRU.remove(node);
+            node->fDetachedNext = detached;
+            detached = node;
+        }
+        c.fVenusMap.reset();
+        c.fVenusBytes = 0;
+        c.fLastCachedValue = nullptr;
+    }
+    venusDeleteDetached(detached);
+}
+
 void ParagraphCache::updateTo(ParagraphImpl* paragraph, const Entry* entry) {
 
     paragraph->fRuns.clear();
@@ -357,6 +594,9 @@ void ParagraphCache::abandon() {
 }
 
 void ParagraphCache::reset() {
+    if (fCache->fVenusShared) {
+        return this->venusReset();
+    }
     SkAutoMutexExclusive lock(fParagraphMutex);
 #ifdef PARAGRAPH_CACHE_STATS
     fCache->fTotalRequests = 0;
@@ -368,6 +608,9 @@ void ParagraphCache::reset() {
 }
 
 bool ParagraphCache::findParagraph(ParagraphImpl* paragraph) {
+    if (fCache->fVenusShared) {
+        return this->venusFindParagraph(paragraph);
+    }
     if (!fCache->fCacheIsOn) {
         return false;
     }
@@ -392,6 +635,9 @@ bool ParagraphCache::findParagraph(ParagraphImpl* paragraph) {
 }
 
 bool ParagraphCache::updateParagraph(ParagraphImpl* paragraph) {
+    if (fCache->fVenusShared) {
+        return this->venusUpdateParagraph(paragraph);
+    }
     if (!fCache->fCacheIsOn) {
         return false;
     }

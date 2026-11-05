@@ -46,7 +46,17 @@ public:
     void enableFontFallback();
     bool fontFallbackEnabled() { return fEnableFontFallback; }
 
-    ParagraphCache* getParagraphCache() { return &fParagraphCache; }
+    ParagraphCache* getParagraphCache() { return fParagraphCachePtr; }
+
+    // Venus: route this facade's paragraph cache to one shared with other
+    // worker facades (see ParagraphCache::venusConfigureShared). nullptr
+    // restores the member cache. The owner of the shared cache decides its
+    // lifetime; clearCaches() keeps resetting the member cache only.
+    void setVenusSharedParagraphCache(std::shared_ptr<ParagraphCache> cache) {
+        fVenusSharedParagraphCache = std::move(cache);
+        fParagraphCachePtr = fVenusSharedParagraphCache ? fVenusSharedParagraphCache.get()
+                                                        : &fParagraphCache;
+    }
 
     void clearCaches();
 
@@ -69,6 +79,8 @@ private:
 
     std::vector<SkString> fDefaultFamilyNames;
     ParagraphCache fParagraphCache;
+    ParagraphCache* fParagraphCachePtr = &fParagraphCache;
+    std::shared_ptr<ParagraphCache> fVenusSharedParagraphCache;
 };
 }  // namespace textlayout
 }  // namespace skia
