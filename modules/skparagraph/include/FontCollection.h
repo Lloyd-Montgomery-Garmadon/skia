@@ -58,6 +58,19 @@ public:
                                                         : &fParagraphCache;
     }
 
+    // Venus: one variation-clone table (cloneTypeface results) shared by every
+    // worker facade of the same font epoch, so a (typeface, arguments) pair maps
+    // to a single SkTypeface — one FreeType face, one copy of the variable-font
+    // data — instead of one per facade. Lookups and the first clone of a pair run
+    // under the table's own mutex; the SkTypeface itself is thread-safe. nullptr
+    // restores the member cache. Like the shared paragraph cache, the owner
+    // decides its lifetime; clearCaches() keeps resetting the member caches only.
+    class VenusSharedVariationCache;
+    static std::shared_ptr<VenusSharedVariationCache> MakeVenusSharedVariationCache();
+    void setVenusSharedVariationCache(std::shared_ptr<VenusSharedVariationCache> cache) {
+        fVenusSharedVariationCache = std::move(cache);
+    }
+
     void clearCaches();
 
 private:
@@ -81,6 +94,7 @@ private:
     ParagraphCache fParagraphCache;
     ParagraphCache* fParagraphCachePtr = &fParagraphCache;
     std::shared_ptr<ParagraphCache> fVenusSharedParagraphCache;
+    std::shared_ptr<VenusSharedVariationCache> fVenusSharedVariationCache;
 };
 }  // namespace textlayout
 }  // namespace skia

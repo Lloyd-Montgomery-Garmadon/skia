@@ -2,6 +2,7 @@
 #include "modules/skparagraph/include/FontCollection.h"
 
 #include "include/core/SkTypeface.h"
+#include "include/private/base/SkMutex.h"
 #include "modules/skparagraph/include/Paragraph.h"
 #include "modules/skparagraph/src/ParagraphImpl.h"
 #include "modules/skshaper/include/SkShaper_harfbuzz.h"
@@ -74,6 +75,17 @@ struct FontCollection::VariationCache {
     };
     skia_private::THashMap<Key, sk_sp<SkTypeface>, Key::Hasher> fTypefaces;
 };
+
+class FontCollection::VenusSharedVariationCache {
+public:
+    SkMutex fMutex;
+    VariationCache fCache;
+};
+
+std::shared_ptr<FontCollection::VenusSharedVariationCache>
+FontCollection::MakeVenusSharedVariationCache() {
+    return std::make_shared<VenusSharedVariationCache>();
+}
 
 FontCollection::FontCollection()
         : fFaceCache(std::make_unique<FaceCache>())
@@ -273,6 +285,21 @@ sk_sp<SkTypeface> FontCollection::defaultFallback() {
 sk_sp<SkTypeface> FontCollection::cloneTypeface(const sk_sp<SkTypeface>& typeface,
                                                 const FontArguments& args) {
     VariationCache::Key variationKey(typeface->uniqueID(), args);
+    if (fVenusSharedVariationCache) {
+        // Venus: clone once per (typeface, arguments) across worker facades. The
+        // first clone of a pair also runs under the lock so two workers never
+        // build twin faces; later lookups only hash. Lock order is this mutex,
+        // then whatever CloneTypeface takes (FreeType's global mutex); nothing
+        // takes them in the other order.
+        SkAutoMutexExclusive lock(fVenusSharedVariationCache->fMutex);
+        auto& shared = fVenusSharedVariationCache->fCache.fTypefaces;
+        if (auto found = shared.find(variationKey)) {
+            return *found;
+        }
+        sk_sp<SkTypeface> clone = args.CloneTypeface(typeface);
+        shared.set(variationKey, clone);
+        return clone;
+    }
     auto found = fVariationCache->fTypefaces.find(variationKey);
     if (found) {
         return *found;
